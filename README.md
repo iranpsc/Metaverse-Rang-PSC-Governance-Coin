@@ -1,66 +1,69 @@
-## Foundry
+# Metarang PSC Governance Coin
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+A decentralized governance token for the Metarang ecosystem, built with Foundry.
 
-Foundry consists of:
+## Overview
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+This smart contract implements a standard governance token (ERC-20 based) that enables community-driven decision making within the Metarang platform.
 
-## Documentation
+## Features
 
-https://book.getfoundry.sh/
+- Voting Power - Token holders can vote on proposals
+- Delegation - Delegate voting power to other addresses
+- Proposal Creation - Submit new governance proposals
+- Treasury Management - Participate in budget allocation decisions
 
-## Usage
+## 🏦 Investor Vesting Contract (قرارداد قفل‌سازی سرمایه‌گذار)
 
-### Build
+این پروژه شامل یک قرارداد وستینگ پله‌ای (Step Vesting) برای سرمایه‌گذاران متارنگ است که توکن‌های آنها را در بازه‌های زمانی مشخص آزاد می‌کند.
 
-```shell
-$ forge build
-```
+### شرایط وستینگ
 
-### Test
+| آیتم | مقدار |
+|------|-------|
+| تعداد مراحل | 4 مرحله |
+| مدت هر مرحله | 180 روز (حدود 6 ماه) |
+| مدت کل | 720 روز (حدود 2 سال) |
+| برنامه آزادسازی | 25% در هر مرحله |
 
-```shell
-$ forge test
-```
+### جدول آزادسازی توکن‌ها
 
-### Format
+| مرحله | زمان | درصد آزاد شده | وضعیت |
+|-------|------|---------------|--------|
+| 1 | روز صفر (همان ابتدا) | 25% | قابل برداشت فوری |
+| 2 | پس از 180 روز | 25% | 50% کل |
+| 3 | پس از 360 روز | 25% | 75% کل |
+| 4 | پس از 540 روز | 25% | 100% کل |
 
-```shell
-$ forge fmt
-```
+### توابع اصلی قرارداد
 
-### Gas Snapshots
+| تابع | کاربرد |
+|------|--------|
+| releasable() | نمایش مقدار توکن‌های قابل برداشت در لحظه فعلی |
+| release() | برداشت توکن‌های آزاد شده توسط سرمایه‌گذار |
+| vestedAmount() | محاسبه مقدار کل توکن‌های آزاد شده تا یک تاریخ مشخص |
 
-```shell
-$ forge snapshot
-```
+> نکته: قرارداد قابلیت دریافت کوین بومی شبکه (ETH) را نیز دارد.
 
-### Anvil
+## Technical Stack
 
-```shell
-$ anvil
-```
+- Solidity ^0.8.20
+- Foundry (Forge, Cast, Anvil)
+- EVM-compatible chains (Ethereum, Polygon, BSC)
 
-### Deploy
+## Quick Start
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
+```bash
+# Clone the repository
+git clone https://github.com/iranpsc/metarang-PSC-governance-coin.git
 
-### Cast
+# Install dependencies
+forge install
 
-```shell
-$ cast <subcommand>
-```
+# Build contracts
+forge build
 
-### Help
+# Run tests
+forge test
 
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+
