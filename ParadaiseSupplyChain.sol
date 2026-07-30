@@ -10,34 +10,22 @@ import "@openzeppelin/contracts/finance/VestingWallet.sol";
 
 /**
  * @title InvestorStepVesting
- * @notice Step-based vesting contract for investors (e.g., 4 steps of 6 months each)
+ * @notice Step-based vesting contract for investors (4 steps of 6 months each)
  */
 contract InvestorStepVesting is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    // ============================
-    // Immutable Parameters
-    // ============================
     address public immutable beneficiary;
     uint64 public immutable start;
     uint64 public immutable stepDuration;
     uint8 public immutable totalSteps;
 
-    // ============================
-    // Mutable State
-    // ============================
     uint256 public released;
     bool public isRevoked;
 
-    // ============================
-    // Events
-    // ============================
     event Released(uint256 amount);
     event Revoked(address indexed revokedBy);
 
-    // ============================
-    // Constructor
-    // ============================
     constructor(
         address _beneficiary,
         uint64 _start,
@@ -54,21 +42,13 @@ contract InvestorStepVesting is ReentrancyGuard {
         totalSteps = _totalSteps;
     }
 
-    // ============================
-    // Core Functions
-    // ============================
+    receive() external payable {}
 
-    /**
-     * @notice Returns the amount of tokens that can be released right now
-     */
     function releasable(address token) public view returns (uint256) {
         uint256 vested = vestedAmount(token, uint64(block.timestamp));
         return vested - released;
     }
 
-    /**
-     * @notice Releases vested tokens to the beneficiary
-     */
     function release(address token) external nonReentrant {
         require(!isRevoked, "Vesting revoked");
         uint256 amount = releasable(token);
@@ -80,10 +60,6 @@ contract InvestorStepVesting is ReentrancyGuard {
         emit Released(amount);
     }
 
-    /**
-     * @notice Revokes the vesting and transfers remaining tokens to a specified address
-     * @dev Only callable by the beneficiary
-     */
     function revoke(address token, address to) external {
         require(msg.sender == beneficiary, "Only beneficiary can revoke");
         require(!isRevoked, "Already revoked");
@@ -95,13 +71,6 @@ contract InvestorStepVesting is ReentrancyGuard {
         emit Revoked(msg.sender);
     }
 
-    // ============================
-    // View Functions
-    // ============================
-
-    /**
-     * @notice Calculates the total vested amount up to a given timestamp
-     */
     function vestedAmount(address token, uint64 timestamp) public view returns (uint256) {
         if (isRevoked) {
             return released;
@@ -122,16 +91,10 @@ contract InvestorStepVesting is ReentrancyGuard {
         return (totalAllocation * elapsedSteps) / totalSteps;
     }
 
-    /**
-     * @notice Returns the total amount of tokens allocated to this vesting contract
-     */
     function getTotalAllocation(address token) public view returns (uint256) {
         return IERC20(token).balanceOf(address(this)) + released;
     }
 
-    /**
-     * @notice Returns the current vesting step (0 = not started, totalSteps = fully vested)
-     */
     function getCurrentStep() public view returns (uint256) {
         if (block.timestamp < start) {
             return 0;
@@ -140,18 +103,10 @@ contract InvestorStepVesting is ReentrancyGuard {
         return elapsedSteps > totalSteps ? totalSteps : elapsedSteps;
     }
 
-    /**
-     * @notice Returns the vesting percentage completed (0% to 100%)
-     */
     function getVestedPercentage() public view returns (uint256) {
         uint256 currentStep = getCurrentStep();
         return (currentStep * 100) / totalSteps;
     }
-
-    // ============================
-    // Receive Ether (for compatibility)
-    // ============================
-    receive() external payable {}
 }
 
 /**
@@ -161,32 +116,23 @@ contract InvestorStepVesting is ReentrancyGuard {
 contract MyToken is ERC20, Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    // ============================
-    // Constants
-    // ============================
     uint256 public constant TOTAL_SUPPLY = 20_000_000 * 10**18; // 20 million with 18 decimals
-    uint256 public constant PUBLIC_PERCENT = 10; // 10%
-    uint256 public constant TEAM_PERCENT = 3;    // 3%
-    uint256 public constant INVESTOR_PERCENT = 87; // 87%
+    uint256 public constant PUBLIC_PERCENT = 10;
+    uint256 public constant TEAM_PERCENT = 3;
+    uint256 public constant INVESTOR_PERCENT = 87;
 
     uint64 public constant TEAM_CLIFF = 365 days;
     uint64 public constant TEAM_VESTING_DURATION = 730 days;
 
-    uint64 public constant INVESTOR_STEP = 180 days; // 6 months
-    uint8 public constant INVESTOR_STEPS = 4;        // 4 steps = 24 months
+    uint64 public constant INVESTOR_STEP = 180 days;
+    uint8 public constant INVESTOR_STEPS = 4;
 
-    // ============================
-    // Storage Variables
-    // ============================
     VestingWallet[] public teamVestings;
     InvestorStepVesting public investorVesting;
 
     mapping(address => string) public teamMemberNames;
     address[] public teamMemberAddresses;
 
-    // ============================
-    // Events
-    // ============================
     event TeamVestingCreated(address indexed beneficiary, string name, address vestingWallet, uint256 amount);
     event InvestorVestingCreated(address indexed investor, address vestingWallet, uint256 amount);
     event PublicDistributed(address indexed publicWallet, uint256 amount);
@@ -194,9 +140,6 @@ contract MyToken is ERC20, Ownable, Pausable, ReentrancyGuard {
     event ContractPaused(address indexed pausedBy);
     event ContractUnpaused(address indexed unpausedBy);
 
-    // ============================
-    // Constructor
-    // ============================
     constructor(
         address publicWallet,
         address[] memory teamWallets,
@@ -207,7 +150,6 @@ contract MyToken is ERC20, Ownable, Pausable, ReentrancyGuard {
         ERC20("Paradaise Supply Chain", "PSC")
         Ownable(msg.sender)
     {
-        // Input validation
         require(publicWallet != address(0), "Invalid public wallet");
         require(investorWallet != address(0), "Invalid investor wallet");
         require(teamWallets.length == 4, "Team wallets must be exactly 4");
@@ -219,26 +161,23 @@ contract MyToken is ERC20, Ownable, Pausable, ReentrancyGuard {
             require(bytes(teamNames[i]).length > 0, "Invalid team name");
         }
 
-        // Store team member information
         for (uint256 i = 0; i < teamWallets.length; i++) {
             teamMemberNames[teamWallets[i]] = teamNames[i];
             teamMemberAddresses.push(teamWallets[i]);
         }
 
-        // Mint total supply to the contract itself
         _mint(address(this), TOTAL_SUPPLY);
 
-        // ===== Public Distribution (10%) =====
+        // Public distribution (10%)
         uint256 publicAmount = (TOTAL_SUPPLY * PUBLIC_PERCENT) / 100;
         _transfer(address(this), publicWallet, publicAmount);
         emit PublicDistributed(publicWallet, publicAmount);
 
-        // ===== Team Vesting (3%) =====
+        // Team vesting (3%)
         uint256 teamTotalAmount = (TOTAL_SUPPLY * TEAM_PERCENT) / 100;
         uint256 perTeamMember = teamTotalAmount / teamWallets.length;
 
         for (uint256 i = 0; i < teamWallets.length; i++) {
-            // Create a separate vesting wallet for each team member
             VestingWallet vesting = new VestingWallet(
                 teamWallets[i],
                 startTimestamp + TEAM_CLIFF,
@@ -251,7 +190,7 @@ contract MyToken is ERC20, Ownable, Pausable, ReentrancyGuard {
             emit TeamVestingCreated(teamWallets[i], teamNames[i], address(vesting), perTeamMember);
         }
 
-        // ===== Investor Step Vesting (87%) =====
+        // Investor step vesting (87%)
         uint256 investorAmount = TOTAL_SUPPLY - publicAmount - teamTotalAmount;
 
         investorVesting = new InvestorStepVesting(
@@ -267,7 +206,7 @@ contract MyToken is ERC20, Ownable, Pausable, ReentrancyGuard {
     }
 
     // ============================
-    // Pause / Unpause Functions
+    // Pause / Unpause
     // ============================
     function pause() external onlyOwner {
         _pause();
@@ -279,9 +218,6 @@ contract MyToken is ERC20, Ownable, Pausable, ReentrancyGuard {
         emit ContractUnpaused(msg.sender);
     }
 
-    // ============================
-    // Overridden Transfer Functions (with pause protection)
-    // ============================
     function transfer(address to, uint256 amount) public virtual override whenNotPaused returns (bool) {
         return super.transfer(to, amount);
     }
@@ -291,12 +227,8 @@ contract MyToken is ERC20, Ownable, Pausable, ReentrancyGuard {
     }
 
     // ============================
-    // Rescue Stray Tokens
+    // Rescue Tokens
     // ============================
-    /**
-     * @notice Allows the owner to rescue tokens accidentally sent to this contract
-     * @dev Cannot rescue locked tokens (team / investor vesting)
-     */
     function rescueTokens(address token, address to) external onlyOwner nonReentrant {
         require(to != address(0), "Invalid recipient");
         uint256 balance = IERC20(token).balanceOf(address(this));
@@ -313,28 +245,17 @@ contract MyToken is ERC20, Ownable, Pausable, ReentrancyGuard {
         }
     }
 
-    // ============================
-    // Internal Helper Functions
-    // ============================
-    /**
-     * @dev Calculates the total amount of tokens locked in vesting contracts
-     */
     function _getLockedTokenBalance() internal view returns (uint256) {
         uint256 locked = 0;
-
-        // Sum tokens locked in team vesting contracts
         for (uint256 i = 0; i < teamVestings.length; i++) {
             locked += IERC20(address(this)).balanceOf(address(teamVestings[i]));
         }
-
-        // Add tokens locked in investor vesting contract
         locked += IERC20(address(this)).balanceOf(address(investorVesting));
-
         return locked;
     }
 
     // ============================
-    // Public View Functions
+    // Views
     // ============================
     function teamVestingsCount() external view returns (uint256) {
         return teamVestings.length;
