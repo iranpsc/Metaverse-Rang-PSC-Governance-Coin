@@ -2,17 +2,15 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title PSC (Paradaise Supply Chain)
- * @notice Token with annual release algorithm and linear vesting airdrop
- * @dev Optimized for gas efficiency - Auto-corrects total team allocation
+ * @notice Fully decentralized token with automated annual release and immutable wallets
+ * @dev Gas-optimized version
  */
-contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
+contract PSC is ERC20, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ============================
@@ -39,9 +37,17 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
     uint256 public constant RELEASE_START_DATE = 1724284800;
 
     // ============================
-    // FIXED ADDRESSES & ALLOCATIONS
+    // IMMUTABLE WALLETS
     // ============================
+    address public immutable developerWallet;
+    address public immutable founder1;
+    address public immutable founder2;
+    address public immutable publicOfferingWallet;
+    address public immutable publicDistributionWallet;
 
+    // ============================
+    // TEAM MEMBERS (57 addresses - GAS OPTIMIZED)
+    // ============================
     address[] private TEAM_ADDRESSES = [
         0x13C31F9B11AeCA3cE989A00C3E26C6d429d67C88,
         0x370FafefDE558D6830a064D52C7f1e4198E0e453,
@@ -68,7 +74,7 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
         0x06BB67e27796f40F1871D58e3C1d03f37915BaEa,
         0x32cd648720B1092ae257093c6124f2C1A00d7745,
         0x9A98e5BaBed3afE047a45088ECAAF7b379BcC985,
-        0x7B17D6f14d27be7a405015C6C823bB82411090C2,
+        0x703Af6A7A9FB6088d887e4B17147F2baF3aE6659,
         0x7367c473Aa39dbfcCe1f20B2b7A6eea2b993442c,
         0x7c0557C674871bb5e898A69f8b4d4ed86C25f2d7,
         0xe02691fA092c2874719962c8e046fE93c072006D,
@@ -94,7 +100,7 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
         0x06c056FcCaD76D401cCD94105b02F7F99f3319a8,
         0x70bF5Df9AafBE5CE8822322767916246d8da84Da,
         0x0A7693eedf4840184f95a2DC975914a0F121B471,
-        0x8EFAe745a063F7E587A34aaEE61630c4D435333B,
+        0x7ce09d075156487DCd59B1a48E359613d634A8bC,
         0xde59431E70981c8c6722CaE4f9B5720988C35b37,
         0x6CB0a5f838a80D42ef852dee312Fb861277D46Ab,
         0xC78D24c971E3d324830d6B3b1C598141D2D1D868,
@@ -169,13 +175,6 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
     // ============================
     uint256 public remainingSupply;
     uint256 public lastReleaseTime;
-
-    address public developerWallet;
-    address public founder1;
-    address public founder2;
-    address public publicOfferingWallet;
-    address public publicDistributionWallet;
-
     bool public airdropDistributed;
 
     address[] public teamMembers;
@@ -193,41 +192,25 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
     // ============================
     // EVENTS
     // ============================
-    event InitialDistributionDone(
-        uint256 teamAmount,
-        uint256 founder1Amount,
-        uint256 founder2Amount,
-        uint256 publicOfferingAmount,
-        uint256 airdropAmount
-    );
-    event AnnualReleaseDone(
-        uint256 totalReleased,
-        uint256 developerAmount,
-        uint256 founder1Amount,
-        uint256 founder2Amount,
-        uint256 publicAmount
-    );
+    event InitialDistributionDone(uint256 teamAmount, uint256 founder1Amount, uint256 founder2Amount, uint256 publicOfferingAmount, uint256 airdropAmount);
+    event AnnualReleaseDone(uint256 totalReleased, uint256 developerAmount, uint256 founder1Amount, uint256 founder2Amount, uint256 publicAmount);
     event AirdropDistributed(address[] recipients, uint256 eachAmount, uint256 lockDuration, uint256 vestingDuration);
     event AirdropClaimed(address indexed recipient, uint256 amount);
-    event DeveloperWalletUpdated(address indexed newWallet, address oldWallet);
-    event FounderWalletsUpdated(address indexed newFounder1, address indexed newFounder2, address oldFounder1, address oldFounder2);
-    event PublicWalletsUpdated(address indexed newOffering, address indexed newPublic, address oldOffering, address oldPublic);
-    event ContractPaused(address indexed pausedBy);
-    event ContractUnpaused(address indexed unpausedBy);
     event TokensRescued(address indexed token, address indexed to, uint256 amount);
 
     // ============================
-    // CONSTRUCTOR - WITH AUTO-CORRECTION
+    // CONSTRUCTOR — GAS OPTIMIZED
     // ============================
-    constructor() ERC20("Paradaise Supply Chain", "PSC") Ownable(msg.sender) {
-        // Set wallet addresses
-        developerWallet = 0xb0E70A61D6395398c1AE9C417d2604418417e414;
+    constructor()
+        ERC20("Paradaise Supply Chain", "PSC")
+    {
+        // Immutable wallets
+        developerWallet = 0xD47A6b5C4829Ad840890B2df076a4210D96dd1bf;
         founder1 = 0x5496Be16c5098E87F757236E9ba87b487db34b59;
         founder2 = 0xA5B8D2501fEAf22fF7d307A7cc04CC8C51210fd0;
         publicOfferingWallet = 0x5496Be16c5098E87F757236E9ba87b487db34b59;
         publicDistributionWallet = 0x5496Be16c5098E87F757236E9ba87b487db34b59;
 
-        // Validate
         require(developerWallet != address(0), "Invalid developer wallet");
         require(founder1 != address(0), "Invalid founder1");
         require(founder2 != address(0), "Invalid founder2");
@@ -238,7 +221,7 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
         require(teamCount == TEAM_AMOUNTS.length, "Length mismatch");
         require(teamCount > 0, "Team must have at least one member");
 
-        // Store team members
+        // Store team members and allocations
         teamMembers = TEAM_ADDRESSES;
         for (uint256 i = 0; i < teamCount; ) {
             address member = TEAM_ADDRESSES[i];
@@ -248,70 +231,46 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
             unchecked { ++i; }
         }
 
-        // Calculate total team allocation
+        // Validate total team allocation (auto-correct if needed)
+        uint256 targetAllocation = (TOTAL_SUPPLY * TEAM_PERCENT) / 100;
         uint256 totalTeamAllocation = 0;
         for (uint256 i = 0; i < teamCount; ) {
             totalTeamAllocation += TEAM_AMOUNTS[i];
             unchecked { ++i; }
         }
 
-        // Target allocation (1% of total supply = 2,000,000)
-        uint256 targetAllocation = (TOTAL_SUPPLY * TEAM_PERCENT) / 100;
-
-        // AUTO-CORRECT: If there's a difference, add it to the first team member
         if (totalTeamAllocation != targetAllocation) {
-            uint256 difference;
             if (totalTeamAllocation < targetAllocation) {
-                difference = targetAllocation - totalTeamAllocation;
-                teamAllocations[TEAM_ADDRESSES[0]] += difference;
+                teamAllocations[TEAM_ADDRESSES[0]] += targetAllocation - totalTeamAllocation;
             } else {
-                // This should never happen, but just in case
-                difference = totalTeamAllocation - targetAllocation;
-                teamAllocations[TEAM_ADDRESSES[0]] -= difference;
-            }
-
-            // Recalculate to ensure it's correct
-            totalTeamAllocation = 0;
-            for (uint256 i = 0; i < teamCount; ) {
-                totalTeamAllocation += teamAllocations[TEAM_ADDRESSES[i]];
-                unchecked { ++i; }
+                teamAllocations[TEAM_ADDRESSES[0]] -= totalTeamAllocation - targetAllocation;
             }
         }
 
-        // Final validation (now should always pass)
-        require(
-            totalTeamAllocation == targetAllocation,
-            "Total team allocation must equal 2,000,000"
-        );
-
         airdropDistributed = false;
 
+        // Mint total supply to contract
         _mint(address(this), TOTAL_SUPPLY);
         remainingSupply = TOTAL_SUPPLY;
 
-        _performInitialDistribution();
+        // ===== INITIAL DISTRIBUTION (INLINE FOR GAS OPTIMIZATION) =====
 
-        lastReleaseTime = RELEASE_START_DATE;
-    }
-
-    // ============================
-    // INITIAL DISTRIBUTION
-    // ============================
-    function _performInitialDistribution() internal {
-        uint256 teamCount = teamMembers.length;
+        // 1% to team
         for (uint256 i = 0; i < teamCount; ) {
-            uint256 amount = teamAllocations[teamMembers[i]];
+            uint256 amount = teamAllocations[TEAM_ADDRESSES[i]];
             if (amount > 0) {
-                _transfer(address(this), teamMembers[i], amount);
+                _transfer(address(this), TEAM_ADDRESSES[i], amount);
             }
             unchecked { ++i; }
         }
 
+        // 5% to founders
         uint256 founderTotalAmount = (TOTAL_SUPPLY * FOUNDERS_PERCENT) / 100;
         uint256 perFounder = founderTotalAmount / 2;
         _transfer(address(this), founder1, perFounder);
         _transfer(address(this), founder2, perFounder);
 
+        // 2% initial offering
         uint256 publicOfferingAmount = (TOTAL_SUPPLY * INITIAL_OFFERING_PERCENT) / 100;
         _transfer(address(this), publicOfferingWallet, publicOfferingAmount);
 
@@ -326,12 +285,14 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
             publicOfferingAmount,
             AIRDROP_AMOUNT
         );
+
+        lastReleaseTime = RELEASE_START_DATE;
     }
 
     // ============================
-    // AIRDROP FUNCTIONS
+    // AIRDROP
     // ============================
-    function distributeAirdrop(address[] calldata recipients) external onlyOwner nonReentrant {
+    function distributeAirdrop(address[] calldata recipients) public nonReentrant {
         require(!airdropDistributed, "Airdrop already distributed");
         require(recipients.length > 0 && recipients.length <= MAX_AIRDROP_RECIPIENTS, "Invalid recipients count");
 
@@ -359,6 +320,18 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
         emit AirdropDistributed(recipients, eachAmount, AIRDROP_LOCK_DURATION, AIRDROP_VESTING_DURATION);
     }
 
+    function claimAirdrop() external nonReentrant {
+        require(airdropDistributed, "Airdrop not distributed yet");
+
+        uint256 claimable = getClaimableAmount(msg.sender);
+        require(claimable > 0, "Nothing to claim");
+
+        airdropInfo[msg.sender].claimedAmount += claimable;
+        _transfer(address(this), msg.sender, claimable);
+
+        emit AirdropClaimed(msg.sender, claimable);
+    }
+
     function getClaimableAmount(address user) public view returns (uint256) {
         AirdropInfo storage info = airdropInfo[user];
         if (info.totalAllocation == 0) return 0;
@@ -380,19 +353,6 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
             return vestedTotal - info.claimedAmount;
         }
         return 0;
-    }
-
-    function claimAirdrop() external nonReentrant {
-        require(airdropDistributed, "Airdrop not distributed yet");
-
-        uint256 claimable = getClaimableAmount(msg.sender);
-        require(claimable > 0, "Nothing to claim");
-
-        airdropInfo[msg.sender].claimedAmount += claimable;
-
-        _transfer(address(this), msg.sender, claimable);
-
-        emit AirdropClaimed(msg.sender, claimable);
     }
 
     function getVestedAmount(address user) public view returns (uint256) {
@@ -452,7 +412,7 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
     // ============================
     // ANNUAL RELEASE
     // ============================
-    function releaseAnnual() external onlyOwner nonReentrant {
+    function releaseAnnual() public nonReentrant {
         require(block.timestamp >= lastReleaseTime + SECONDS_IN_YEAR, "Too early: must wait 1 year");
         require(remainingSupply > 0, "No remaining supply to release");
         require(airdropDistributed, "Airdrop must be distributed first");
@@ -483,76 +443,21 @@ contract PSC is ERC20, Ownable, Pausable, ReentrancyGuard {
     }
 
     // ============================
-    // UPDATE WALLETS
+    // RESCUE — Only non‑PSC tokens
     // ============================
-    function setDeveloperWallet(address _newWallet) external onlyOwner {
-        require(_newWallet != address(0), "Invalid address");
-        address oldWallet = developerWallet;
-        developerWallet = _newWallet;
-        emit DeveloperWalletUpdated(_newWallet, oldWallet);
-    }
-
-    function setFounderWallets(address _newFounder1, address _newFounder2) external onlyOwner {
-        require(_newFounder1 != address(0), "Invalid founder1");
-        require(_newFounder2 != address(0), "Invalid founder2");
-        address oldFounder1 = founder1;
-        address oldFounder2 = founder2;
-        founder1 = _newFounder1;
-        founder2 = _newFounder2;
-        emit FounderWalletsUpdated(_newFounder1, _newFounder2, oldFounder1, oldFounder2);
-    }
-
-    function setPublicWallets(address _newOfferingWallet, address _newPublicDistributionWallet) external onlyOwner {
-        require(_newOfferingWallet != address(0), "Invalid offering wallet");
-        require(_newPublicDistributionWallet != address(0), "Invalid public distribution wallet");
-        address oldOffering = publicOfferingWallet;
-        address oldPublic = publicDistributionWallet;
-        publicOfferingWallet = _newOfferingWallet;
-        publicDistributionWallet = _newPublicDistributionWallet;
-        emit PublicWalletsUpdated(_newOfferingWallet, _newPublicDistributionWallet, oldOffering, oldPublic);
-    }
-
-    // ============================
-    // PAUSABLE
-    // ============================
-    function pause() external onlyOwner {
-        _pause();
-        emit ContractPaused(msg.sender);
-    }
-
-    function unpause() external onlyOwner {
-        _unpause();
-        emit ContractUnpaused(msg.sender);
-    }
-
-    function transfer(address to, uint256 amount) public virtual override whenNotPaused returns (bool) {
-        return super.transfer(to, amount);
-    }
-
-    function transferFrom(address from, address to, uint256 amount) public virtual override whenNotPaused returns (bool) {
-        return super.transferFrom(from, to, amount);
-    }
-
-    // ============================
-    // RESCUE TOKENS
-    // ============================
-    function rescueTokens(address token, address to) external onlyOwner nonReentrant {
+    function rescueTokens(address token, address to) external nonReentrant {
         require(to != address(0), "Invalid recipient");
-        uint256 balance = IERC20(token).balanceOf(address(this));
+        require(token != address(this), "Cannot rescue PSC tokens");
 
-        if (token == address(this)) {
-            require(balance > remainingSupply, "Cannot rescue locked tokens");
-            uint256 rescurable = balance - remainingSupply;
-            IERC20(token).safeTransfer(to, rescurable);
-            emit TokensRescued(token, to, rescurable);
-        } else {
-            IERC20(token).safeTransfer(to, balance);
-            emit TokensRescued(token, to, balance);
-        }
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        require(balance > 0, "No tokens to rescue");
+
+        IERC20(token).safeTransfer(to, balance);
+        emit TokensRescued(token, to, balance);
     }
 
     // ============================
-    // VIEW FUNCTIONS
+    // VIEWS
     // ============================
     function getRemainingSupply() external view returns (uint256) {
         return remainingSupply;
