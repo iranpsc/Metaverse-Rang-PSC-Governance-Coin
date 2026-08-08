@@ -12,11 +12,18 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  *      Anyone can trigger annual release (timelocked to 365 days).
  *      Airdrop recipients are passed manually at distribution time.
  * 
- * @dev Gas Optimizations:
- *      - Uses _mint() instead of _transfer() for initial distribution
- *      - All loops use unchecked blocks
- *      - Immutable wallets for gas savings
- *      - Minimal storage writes
+ * @dev Distribution (Year 1):
+ *      - Team: 1% (58 members)
+ *      - Founders: 4% (2 founders, 2% each)
+ *      - Consultants: 1% (single wallet)
+ *      - Airdrop: 2% (manual list)
+ *      - Public Offering: 2% (Uniswap initial liquidity)
+ * 
+ * @dev Annual Release (Year 2+):
+ *      - Developer: 1%
+ *      - Founders: 4% (2% each)
+ *      - Consultants: 1%
+ *      - Public Distribution: 4%
  */
 contract PSC is ERC20, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -34,12 +41,16 @@ contract PSC is ERC20, ReentrancyGuard {
     uint256 public constant AIRDROP_LOCK_DURATION = 60 days;
     uint256 public constant AIRDROP_VESTING_DURATION = 365 days;
 
+    // Year 1 Distribution Percentages
     uint256 public constant TEAM_PERCENT = 1;
-    uint256 public constant FOUNDERS_PERCENT = 5;
+    uint256 public constant FOUNDERS_PERCENT = 4;      // 4% total (2% each)
+    uint256 public constant CONSULTANTS_PERCENT = 1;    // 1% to consultants wallet
     uint256 public constant INITIAL_OFFERING_PERCENT = 2;
 
+    // Annual Release Percentages (from remaining supply)
     uint256 public constant ANNUAL_DEVELOPER_PERCENT = 1;
-    uint256 public constant ANNUAL_FOUNDERS_PERCENT = 5;
+    uint256 public constant ANNUAL_FOUNDERS_PERCENT = 4;    // 4% total (2% each)
+    uint256 public constant ANNUAL_CONSULTANTS_PERCENT = 1; // 1% to consultants
     uint256 public constant ANNUAL_PUBLIC_PERCENT = 4;
 
     uint256 public constant RELEASE_START_DATE = 1724284800; // Aug 23, 2027
@@ -50,213 +61,141 @@ contract PSC is ERC20, ReentrancyGuard {
     address public immutable developerWallet;
     address public immutable founder1;
     address public immutable founder2;
+    address public immutable consultantWallet;          // ✅ NEW: 1% to consultants
     address public immutable publicOfferingWallet;
     address public immutable publicDistributionWallet;
 
     // ============================
-    // TEAM MEMBERS (58 addresses — FULLY CORRECTED)
+    // TEAM MEMBERS (58 addresses with full details)
     // ============================
     address[] private TEAM_ADDRESSES = [
         // ===== Development Team (9 members) =====
-        // 1. Abbas Ajorlo — Development Lead — 52,390.54555 PSC (2.6195% of team allocation)
-        0x13C31F9B11AeCA3cE989A00C3E26C6d429d67C88,
-        // 2. Ali Khani — Development — 40,013.94255 PSC (2.0007% of team allocation)
-        0x370FafefDE558D6830a064D52C7f1e4198E0e453,
-        // 3. Ramtin Golben — Backend — 14,262.09495 PSC (0.7131% of team allocation)
-        0xd46EC90073F37EADF3Ba6Cef880666e16b0027dC,
-        // 4. Mohammad Amir Kheradmand — Backend — 14,232.24058 PSC (0.7116% of team allocation)
-        0xac4B2e88b43962bB8Abd1D53f27d4BD5dB6cF19C,
-        // 5. Mahan Jamali — Backend — 14,033.21146 PSC (0.7017% of team allocation)
-        0xe081c7F619633493E168Fb1134CFabAE52e3cC29,
-        // 6. Mohammad Saleh Hemmati — Backend — 14,222.28912 PSC (0.7111% of team allocation)
-        0x2a3e069FFaFc915796a97C18C3504632EB95CdFF,
-        // 7. Amir Hossein Amini — Backend — 30,395.24790 PSC (1.5198% of team allocation)
-        0xc6865b8402f7d87089372c1e42dB77201668b6De,
-        // 8. Parham Aminloo — Backend — 31,884.46485 PSC (1.5942% of team allocation)
-        0x1829cb039A429FF8e89657aAFdD45704B7Bd08A2,
-        // 9. Mobina Nematy — Backend — 44,324.89050 PSC (2.2162% of team allocation)
-        0xd8412BE075EC223a81b7392c14aD0B642d50D818,
-
-        // ===== Frontend & Git Management (14 members) =====
-        // 10. Amin Dehghannejad — Frontend & Git Management — 57,920.79076 PSC (2.8960% of team allocation)
-        0x1a8E19974E522Ff8171080F7979073d53bA0Df8D,
-        // 11. Parsa Bahrami — Frontend — 50,785.59685 PSC (2.5393% of team allocation)
-        0xaf45634d04973786D16b19637498E370182531bE,
-        // 12. Reyhaneh Ghanbari — Frontend — 10,999.67597 PSC (0.54998% of team allocation)
-        0x6B3b636FDe6a9304541103C0a4E63894E4ff1aFC,
-        // 13. Amir Mohseni — Frontend — 36,193.44528 PSC (1.8097% of team allocation)
-        0x5Ef7Bc8045DDE0440564A4977B9D06E4Bf460E5B,
-        // 14. Helia Idehloo — Frontend — 11,099.19053 PSC (0.55496% of team allocation)
-        0xf9cbcf9472f012e225871aE0e737abA22FEAF94C,
-        // 15. Mehdi Gholamhosseini — Frontend — 49,884.62151 PSC (2.4942% of team allocation)
-        0x3AFaF4551c2B937c0f8ef8f9E8DF6cb421794c9e,
-        // 16. Mohammadreza Vahabi — Frontend — 10,999.67597 PSC (0.54998% of team allocation)
-        0xA400905e502f8Ef9ce0a0015D8aC261eB5a43BaE,
-        // 17. Yousef Khodri — Frontend — 47,585.09804 PSC (2.3793% of team allocation)
-        0xEaDA44094abBc1E501167f124489B697f8fB2351,
-        // 18. Ehsan Markazi — Frontend — 37,933.56792 PSC (1.8967% of team allocation)
-        0x4194e119880cBD7d40621327A9294F19826AC48D,
-        // 19. Abolfazl Vedaeian — Frontend — 14,630.29882 PSC (0.7315% of team allocation)
-        0x08434e1b7e240dEC4df6b015563b49A888fa8FBA,
-        // 20. Seyed Mohammadreza Naghipour — Frontend — 14,082.96874 PSC (0.7041% of team allocation)
-        0x24911C287a8E56930e54E6c75f0142478Cf6ba77,
-        // 21. Kasra Ardakani — Frontend — 13,983.45418 PSC (0.6992% of team allocation)
-        0x42103977D4355d913930b4cB2fad2445A8DCd8a1,
-        // 22. Kianoush Karjibani — Frontend — 10,101.28064 PSC (0.5051% of team allocation)
-        0x92e10341dcDF40e957520DcCE4076D2b58083e40,
-        // 23. Aytay Maleki — UI/UX Design — 43,055.52701 PSC (2.1528% of team allocation)
-        0x06BB67e27796f40F1871D58e3C1d03f37915BaEa,
-
+        0x13C31F9B11AeCA3cE989A00C3E26C6d429d67C88, // Abbas Ajorlo
+        0x370FafefDE558D6830a064D52C7f1e4198E0e453, // Ali Khani
+        0xd46EC90073F37EADF3Ba6Cef880666e16b0027dC, // Ramtin Golben
+        0xac4B2e88b43962bB8Abd1D53f27d4BD5dB6cF19C, // Mohammad Amir Kheradmand
+        0xe081c7F619633493E168Fb1134CFabAE52e3cC29, // Mahan Jamali
+        0x2a3e069FFaFc915796a97C18C3504632EB95CdFF, // Mohammad Saleh Hemmati
+        0xc6865b8402f7d87089372c1e42dB77201668b6De, // Amir Hossein Amini
+        0x1829cb039A429FF8e89657aAFdD45704B7Bd08A2, // Parham Aminloo
+        0xd8412BE075EC223a81b7392c14aD0B642d50D818, // Mobina Nematy
+        // ===== Frontend & UI/UX (14 members) =====
+        0x1a8E19974E522Ff8171080F7979073d53bA0Df8D, // Amin Dehghannejad
+        0xaf45634d04973786D16b19637498E370182531bE, // Parsa Bahrami
+        0x6B3b636FDe6a9304541103C0a4E63894E4ff1aFC, // Reyhaneh Ghanbari
+        0x5Ef7Bc8045DDE0440564A4977B9D06E4Bf460E5B, // Amir Mohseni
+        0xf9cbcf9472f012e225871aE0e737abA22FEAF94C, // Helia Idehloo
+        0x3AFaF4551c2B937c0f8ef8f9E8DF6cb421794c9e, // Mehdi Gholamhosseini
+        0xA400905e502f8Ef9ce0a0015D8aC261eB5a43BaE, // Mohammadreza Vahabi
+        0xEaDA44094abBc1E501167f124489B697f8fB2351, // Yousef Khodri
+        0x4194e119880cBD7d40621327A9294F19826AC48D, // Ehsan Markazi
+        0x08434e1b7e240dEC4df6b015563b49A888fa8FBA, // Abolfazl Vedaeian
+        0x24911C287a8E56930e54E6c75f0142478Cf6ba77, // Seyed Mohammadreza Naghipour
+        0x42103977D4355d913930b4cB2fad2445A8DCd8a1, // Kasra Ardakani
+        0x92e10341dcDF40e957520DcCE4076D2b58083e40, // Kianoush Karjibani
+        0x06BB67e27796f40F1871D58e3C1d03f37915BaEa, // Aytay Maleki
         // ===== UI/UX Design (3 members) =====
-        // 24. Mohammadreza Asghari — UI/UX Design — 34,906.39031 PSC (1.7453% of team allocation)
-        0x32cd648720B1092ae257093c6124f2C1A00d7745,
-        // 25. Mohammad Hossein Baghalha — UI/UX Design — 14,092.92020 PSC (0.7046% of team allocation) ✅ CORRECTED
-        0x7B17D6f14d27be7a405015C6C823bB82411090C2,
-        // 26. Mehdi Ghorbanzadeh — UI/UX Design — 33,462.32348 PSC (1.6731% of team allocation)
-        0x703Af6A7A9FB6088d887e4B17147F2baF3aE6659,
-
-        // ===== Management & Prompt Engineering (4 members) =====
-        // 27. Marzieh Sagheb Alizadeh — Management & Prompt Engineer — 59,343.84896 PSC (2.9672% of team allocation)
-        0x7367c473Aa39dbfcCe1f20B2b7A6eea2b993442c,
-        // 28. Tanin Anbasati — Management & Prompt Engineer — 39,125.80763 PSC (1.9563% of team allocation)
-        0x7c0557C674871bb5e898A69f8b4d4ed86C25f2d7,
-        // 29. Mohammad Falah Sheykhlari — Management — 34,825.12009 PSC (1.7413% of team allocation)
-        0xe02691fA092c2874719962c8e046fE93c072006D,
-        // 30. Zahra Mohammadi — 3D Urban Design — 43,708.45309 PSC (2.1854% of team allocation)
-        0xB5169259FbaF35174954a1CDBCd4cc7A5A6a1687,
-
-        // ===== Game Development & 3D Modeling (8 members) =====
-        // 31. Mohammad Javad Garaei — Game Development & 3D Modeling — 50,672.44511 PSC (2.5336% of team allocation)
-        0xd194B36bcF4872303FD1f27e442DB04494B7a846,
-        // 32. Siamak Saadatpour — Game Development — 21,145.18531 PSC (1.0573% of team allocation)
-        0x60f36385E8B584bf983830D6C3b97ed13C670a37,
-        // 33. Benyamin Nouri — Game Development — 52,701.80498 PSC (2.6351% of team allocation)
-        0x2b648129BebdB9E29A93e0b607fba280361b4815,
-        // 34. Arman Yeganehkhah — Game Development — 21,905.91883 PSC (1.0953% of team allocation)
-        0x7e6b5E8772EC51B83ddCCE0caA0B8445081A1E09,
-        // 35. Amirali Dolati — Game Development — 16,515.54686 PSC (0.8258% of team allocation)
-        0xAf083804eCd488B722D1aedD2A962BB7DDddcb5F,
-        // 36. Erfaneh Jokar — 3D Modeling — 27,988.10128 PSC (1.3994% of team allocation)
-        0x540fB674160e0aed8180e626438D154D6D9052D9,
-        // 37. Anahita Karami — 3D Modeling — 14,033.21146 PSC (0.7017% of team allocation)
-        0xe4D4b6fA97b813c30A3fAF7C98bA39eFEb2cDDbb,
-        // 38. Amirhossein Emamgholi — Game Development — 29,001.30692 PSC (1.4501% of team allocation)
-        0x24B10361E6b48ebCD736D50e7d478e897E1f9d03,
-
-        // ===== Founders & Board of Directors (9 members) =====
-        // 39. Hossein Ghadiri — Founder & Concept Creator — 60,538.02368 PSC (3.0269% of team allocation)
-        0x5496Be16c5098E87F757236E9ba87b487db34b59,
-        // 40. Parvin Saeidi — Board of Directors — 54,069.57731 PSC (2.7035% of team allocation)
-        0xfF89C699C93F0BfB9FBE6d328E911a6Ba17b656b,
-        // 41. Mostafa Ghadiri — Board of Directors — 54,069.57731 PSC (2.7035% of team allocation)
-        0xD437b46d330B9DfcFc70E6E4Aee76b8DF9F81637,
-        // 42. Abolfazl Ghadiri — Board of Directors — 54,069.57731 PSC (2.7035% of team allocation)
-        0x1a97F949B5dc4674d6eC1FFa98fb6298c96B2068,
-        // 43. Majid Khalegha — Board of Directors — 54,069.57731 PSC (2.7035% of team allocation)
-        0xF2BEc95049CDc30F1011D006eE170a31A538B033,
-        // 44. Afshin Vaezi Koureh Kabijari — Board of Directors — 54,069.57731 PSC (2.7035% of team allocation)
-        0x863408DdEC15dDb6e4b6f4574aD3d510246EB718,
-        // 45. Amir Madani Far — Founder & Concept Creator — 58,202.19582 PSC (2.9101% of team allocation) ✅ CORRECTED
-        0x38ABF89F423D18c35770Ca6e0245DADCe08e8Bae,
-        // 46. Kioumars Mohammadi Beygi Salkhori — Board of Directors — 54,069.57731 PSC (2.7035% of team allocation)
-        0x782f1c52f5ACE3F0eb84933c03A28F3B62130B29,
-
-        // ===== AI & Content Development (9 members) =====
-        // 47. Vahid Sadri — AI Agent Developer — 28,014.45421 PSC (1.4007% of team allocation)
-        0x4AD8E256C6A8d07958D22aE7EDf3827807F3942E,
-        // 48. Fatemeh Nasiri — Content & Social Media — 54,472.88771 PSC (2.7236% of team allocation)
-        0x151b28b72b71CB8F9875b5A0fA6520d28Aa8CE4E,
-        // 49. Nazanin Heshmati — Content & Social Media — 32,967.14640 PSC (1.6484% of team allocation)
-        0x06c056FcCaD76D401cCD94105b02F7F99f3319a8,
-        // 50. Saeed Zajkani — Content & Social Media — 46,937.70055 PSC (2.3469% of team allocation)
-        0x70bF5Df9AafBE5CE8822322767916246d8da84Da,
-        // 51. Majid Majidi — Content & Social Media — 23,351.09138 PSC (1.1676% of team allocation) ✅ CORRECTED
-        0x8EFAe745a063F7E587A34aaEE61630c4D435333B,
-        // 52. Amin Habibi Anbuhi — AI Developer — 30,929.67794 PSC (1.5465% of team allocation)
-        0x7ce09d075156487DCd59B1a48E359613d634A8bC,
-        // 53. Behdad Bahadvand Chegini — AI Developer — 30,929.67794 PSC (1.5465% of team allocation)
-        0xde59431E70981c8c6722CaE4f9B5720988C35b37,
-        // 54. Hossein Nasiri Shahraki — AI Developer — 30,929.67794 PSC (1.5465% of team allocation)
-        0x6CB0a5f838a80D42ef852dee312Fb861277D46Ab,
-        // 55. Sina Sheikhi — AI Developer — 30,929.67794 PSC (1.5465% of team allocation)
-        0xC78D24c971E3d324830d6B3b1C598141D2D1D868,
-
-        // ===== Blockchain Development (3 members) =====
-        // 56. Parsa Abolhasani Rad — Blockchain Developer — 33,083.61530 PSC (1.6542% of team allocation)
-        0x7b8F6BC781df2040CB38C6B734B40973Cb3a05e0,
-        // 57. Mohammad Ghiasvand — Blockchain Developer — 24,603.03982 PSC (1.2302% of team allocation)
-        0x295514b1462EAFeb5B10cF7Eb439194f178c4d86,
-        // 58. Ali Nasirloo — Blockchain Developer — 31,251.16525 PSC (1.5626% of team allocation)
-        0x319999319dF38ce00Ec43208F4DAdaF61310b7f6
+        0x32cd648720B1092ae257093c6124f2C1A00d7745, // Mohammadreza Asghari
+        0x7B17D6f14d27be7a405015C6C823bB82411090C2, // Mohammad Hossein Baghalha
+        0x703Af6A7A9FB6088d887e4B17147F2baF3aE6659, // Mehdi Ghorbanzadeh
+        // ===== Management & Prompt (4 members) =====
+        0x7367c473Aa39dbfcCe1f20B2b7A6eea2b993442c, // Marzieh Sagheb Alizadeh
+        0x7c0557C674871bb5e898A69f8b4d4ed86C25f2d7, // Tanin Anbasati
+        0xe02691fA092c2874719962c8e046fE93c072006D, // Mohammad Falah Sheykhlari
+        0xB5169259FbaF35174954a1CDBCd4cc7A5A6a1687, // Zahra Mohammadi
+        // ===== Game Development & 3D (8 members) =====
+        0xd194B36bcF4872303FD1f27e442DB04494B7a846, // Mohammad Javad Garaei
+        0x60f36385E8B584bf983830D6C3b97ed13C670a37, // Siamak Saadatpour
+        0x2b648129BebdB9E29A93e0b607fba280361b4815, // Benyamin Nouri
+        0x7e6b5E8772EC51B83ddCCE0caA0B8445081A1E09, // Arman Yeganehkhah
+        0xAf083804eCd488B722D1aedD2A962BB7DDddcb5F, // Amirali Dolati
+        0x540fB674160e0aed8180e626438D154D6D9052D9, // Erfaneh Jokar
+        0xe4D4b6fA97b813c30A3fAF7C98bA39eFEb2cDDbb, // Anahita Karami
+        0x24B10361E6b48ebCD736D50e7d478e897E1f9d03, // Amirhossein Emamgholi
+        // ===== Founders & Board (9 members) =====
+        0x5496Be16c5098E87F757236E9ba87b487db34b59, // Hossein Ghadiri
+        0xfF89C699C93F0BfB9FBE6d328E911a6Ba17b656b, // Parvin Saeidi
+        0xD437b46d330B9DfcFc70E6E4Aee76b8DF9F81637, // Mostafa Ghadiri
+        0x1a97F949B5dc4674d6eC1FFa98fb6298c96B2068, // Abolfazl Ghadiri
+        0xF2BEc95049CDc30F1011D006eE170a31A538B033, // Majid Khalegha
+        0x863408DdEC15dDb6e4b6f4574aD3d510246EB718, // Afshin Vaezi
+        0x38ABF89F423D18c35770Ca6e0245DADCe08e8Bae, // Amir Madani Far
+        0x782f1c52f5ACE3F0eb84933c03A28F3B62130B29, // Kioumars Mohammadi
+        // ===== AI & Content (9 members) =====
+        0x4AD8E256C6A8d07958D22aE7EDf3827807F3942E, // Vahid Sadri
+        0x151b28b72b71CB8F9875b5A0fA6520d28Aa8CE4E, // Fatemeh Nasiri
+        0x06c056FcCaD76D401cCD94105b02F7F99f3319a8, // Nazanin Heshmati
+        0x70bF5Df9AafBE5CE8822322767916246d8da84Da, // Saeed Zajkani
+        0x8EFAe745a063F7E587A34aaEE61630c4D435333B, // Majid Majidi
+        0x7ce09d075156487DCd59B1a48E359613d634A8bC, // Amin Habibi Anbuhi
+        0xde59431E70981c8c6722CaE4f9B5720988C35b37, // Behdad Bahadvand
+        0x6CB0a5f838a80D42ef852dee312Fb861277D46Ab, // Hossein Nasiri
+        0xC78D24c971E3d324830d6B3b1C598141D2D1D868, // Sina Sheikhi
+        // ===== Blockchain (3 members) =====
+        0x7b8F6BC781df2040CB38C6B734B40973Cb3a05e0, // Parsa Abolhasani Rad
+        0x295514b1462EAFeb5B10cF7Eb439194f178c4d86, // Mohammad Ghiasvand
+        0x319999319dF38ce00Ec43208F4DAdaF61310b7f6  // Ali Nasirloo
     ];
 
     uint256[] private TEAM_AMOUNTS = [
-        // Development Team (9)
-        52390 * 10**18 + (54555 * 10**13),   // Abbas Ajorlo
-        40013 * 10**18 + (94255 * 10**13),   // Ali Khani
-        14262 * 10**18 + (9495 * 10**15),    // Ramtin Golben
-        14232 * 10**18 + (24058 * 10**15),   // Mohammad Amir Kheradmand
-        14033 * 10**18 + (21146 * 10**15),   // Mahan Jamali
-        14222 * 10**18 + (28912 * 10**15),   // Mohammad Saleh Hemmati
-        30395 * 10**18 + (2479 * 10**17),    // Amir Hossein Amini
-        31884 * 10**18 + (46485 * 10**15),   // Parham Aminloo
-        44324 * 10**18 + (8905 * 10**17),    // Mobina Nematy
-        // Frontend & Git (14)
-        57920 * 10**18 + (79076 * 10**15),   // Amin Dehghannejad
-        50785 * 10**18 + (59685 * 10**15),   // Parsa Bahrami
-        10999 * 10**18 + (67597 * 10**15),   // Reyhaneh Ghanbari
-        36193 * 10**18 + (44528 * 10**15),   // Amir Mohseni
-        11099 * 10**18 + (19053 * 10**15),   // Helia Idehloo
-        49884 * 10**18 + (62151 * 10**15),   // Mehdi Gholamhosseini
-        10999 * 10**18 + (67597 * 10**15),   // Mohammadreza Vahabi
-        47585 * 10**18 + (9804 * 10**17),    // Yousef Khodri
-        37933 * 10**18 + (56792 * 10**15),   // Ehsan Markazi
-        14630 * 10**18 + (29882 * 10**15),   // Abolfazl Vedaeian
-        14082 * 10**18 + (96874 * 10**15),   // Seyed Mohammadreza Naghipour
-        13983 * 10**18 + (45418 * 10**15),   // Kasra Ardakani
-        10101 * 10**18 + (28064 * 10**15),   // Kianoush Karjibani
-        43055 * 10**18 + (52701 * 10**15),   // Aytay Maleki
-        // UI/UX Design (3)
-        34906 * 10**18 + (39031 * 10**15),   // Mohammadreza Asghari
-        14092 * 10**18 + (9202 * 10**17),    // Mohammad Hossein Baghalha
-        33462 * 10**18 + (32348 * 10**15),   // Mehdi Ghorbanzadeh
-        // Management & Prompt (4)
-        59343 * 10**18 + (84896 * 10**15),   // Marzieh Sagheb Alizadeh
-        39125 * 10**18 + (80763 * 10**15),   // Tanin Anbasati
-        34825 * 10**18 + (12009 * 10**17),   // Mohammad Falah Sheykhlari
-        43708 * 10**18 + (45309 * 10**15),   // Zahra Mohammadi
-        // Game Development & 3D (8)
-        50672 * 10**18 + (44511 * 10**15),   // Mohammad Javad Garaei
-        21145 * 10**18 + (18531 * 10**15),   // Siamak Saadatpour
-        52701 * 10**18 + (80498 * 10**15),   // Benyamin Nouri
-        21905 * 10**18 + (91883 * 10**15),   // Arman Yeganehkhah
-        16515 * 10**18 + (54686 * 10**15),   // Amirali Dolati
-        27988 * 10**18 + (10128 * 10**17),   // Erfaneh Jokar
-        14033 * 10**18 + (21146 * 10**15),   // Anahita Karami
-        29001 * 10**18 + (30692 * 10**15),   // Amirhossein Emamgholi
-        // Founders & Board (9)
-        60538 * 10**18 + (2368 * 10**17),    // Hossein Ghadiri
-        54069 * 10**18 + (57731 * 10**15),   // Parvin Saeidi
-        54069 * 10**18 + (57731 * 10**15),   // Mostafa Ghadiri
-        54069 * 10**18 + (57731 * 10**15),   // Abolfazl Ghadiri
-        54069 * 10**18 + (57731 * 10**15),   // Majid Khalegha
-        54069 * 10**18 + (57731 * 10**15),   // Afshin Vaezi
-        58202 * 10**18 + (19582 * 10**17),   // Amir Madani Far
-        54069 * 10**18 + (57731 * 10**15),   // Kioumars Mohammadi
-        // AI & Content (9)
-        28014 * 10**18 + (45421 * 10**15),   // Vahid Sadri
-        54472 * 10**18 + (88771 * 10**15),   // Fatemeh Nasiri
-        32967 * 10**18 + (1464 * 10**18),    // Nazanin Heshmati
-        46937 * 10**18 + (70055 * 10**15),   // Saeed Zajkani
-        23351 * 10**18 + (9138 * 10**17),    // Majid Majidi
-        30929 * 10**18 + (67794 * 10**15),   // Amin Habibi Anbuhi
-        30929 * 10**18 + (67794 * 10**15),   // Behdad Bahadvand
-        30929 * 10**18 + (67794 * 10**15),   // Hossein Nasiri
-        30929 * 10**18 + (67794 * 10**15),   // Sina Sheikhi
-        // Blockchain (3)
-        33083 * 10**18 + (6153 * 10**17),    // Parsa Abolhasani Rad
-        24603 * 10**18 + (3982 * 10**17),    // Mohammad Ghiasvand
-        31251 * 10**18 + (16525 * 10**15)    // Ali Nasirloo
+        52390 * 10**18 + (54555 * 10**13),
+        40013 * 10**18 + (94255 * 10**13),
+        14262 * 10**18 + (9495 * 10**15),
+        14232 * 10**18 + (24058 * 10**15),
+        14033 * 10**18 + (21146 * 10**15),
+        14222 * 10**18 + (28912 * 10**15),
+        30395 * 10**18 + (2479 * 10**17),
+        31884 * 10**18 + (46485 * 10**15),
+        44324 * 10**18 + (8905 * 10**17),
+        57920 * 10**18 + (79076 * 10**15),
+        50785 * 10**18 + (59685 * 10**15),
+        10999 * 10**18 + (67597 * 10**15),
+        36193 * 10**18 + (44528 * 10**15),
+        11099 * 10**18 + (19053 * 10**15),
+        49884 * 10**18 + (62151 * 10**15),
+        10999 * 10**18 + (67597 * 10**15),
+        47585 * 10**18 + (9804 * 10**17),
+        37933 * 10**18 + (56792 * 10**15),
+        14630 * 10**18 + (29882 * 10**15),
+        14082 * 10**18 + (96874 * 10**15),
+        13983 * 10**18 + (45418 * 10**15),
+        10101 * 10**18 + (28064 * 10**15),
+        43055 * 10**18 + (52701 * 10**15),
+        34906 * 10**18 + (39031 * 10**15),
+        14092 * 10**18 + (9202 * 10**17),
+        33462 * 10**18 + (32348 * 10**15),
+        59343 * 10**18 + (84896 * 10**15),
+        39125 * 10**18 + (80763 * 10**15),
+        34825 * 10**18 + (12009 * 10**17),
+        43708 * 10**18 + (45309 * 10**15),
+        50672 * 10**18 + (44511 * 10**15),
+        21145 * 10**18 + (18531 * 10**15),
+        52701 * 10**18 + (80498 * 10**15),
+        21905 * 10**18 + (91883 * 10**15),
+        16515 * 10**18 + (54686 * 10**15),
+        27988 * 10**18 + (10128 * 10**17),
+        14033 * 10**18 + (21146 * 10**15),
+        29001 * 10**18 + (30692 * 10**15),
+        60538 * 10**18 + (2368 * 10**17),
+        54069 * 10**18 + (57731 * 10**15),
+        54069 * 10**18 + (57731 * 10**15),
+        54069 * 10**18 + (57731 * 10**15),
+        54069 * 10**18 + (57731 * 10**15),
+        54069 * 10**18 + (57731 * 10**15),
+        58202 * 10**18 + (19582 * 10**17),
+        54069 * 10**18 + (57731 * 10**15),
+        28014 * 10**18 + (45421 * 10**15),
+        54472 * 10**18 + (88771 * 10**15),
+        32967 * 10**18 + (1464 * 10**18),
+        46937 * 10**18 + (70055 * 10**15),
+        23351 * 10**18 + (9138 * 10**17),
+        30929 * 10**18 + (67794 * 10**15),
+        30929 * 10**18 + (67794 * 10**15),
+        30929 * 10**18 + (67794 * 10**15),
+        30929 * 10**18 + (67794 * 10**15),
+        33083 * 10**18 + (6153 * 10**17),
+        24603 * 10**18 + (3982 * 10**17),
+        31251 * 10**18 + (16525 * 10**15)
     ];
 
     // ============================
@@ -284,8 +223,8 @@ contract PSC is ERC20, ReentrancyGuard {
     // ============================
     // EVENTS
     // ============================
-    event InitialDistributionDone(uint256 teamAmount, uint256 founder1Amount, uint256 founder2Amount, uint256 publicOfferingAmount, uint256 airdropAmount);
-    event AnnualReleaseDone(uint256 totalReleased, uint256 developerAmount, uint256 founder1Amount, uint256 founder2Amount, uint256 publicAmount);
+    event InitialDistributionDone(uint256 teamAmount, uint256 founder1Amount, uint256 founder2Amount, uint256 consultantAmount, uint256 publicOfferingAmount, uint256 airdropAmount);
+    event AnnualReleaseDone(uint256 totalReleased, uint256 developerAmount, uint256 founder1Amount, uint256 founder2Amount, uint256 consultantAmount, uint256 publicAmount);
     event AirdropDistributed(address[] recipients, uint256 eachAmount, uint256 lockDuration, uint256 vestingDuration);
     event AirdropClaimed(address indexed recipient, uint256 amount);
     event TokensRescued(address indexed token, address indexed to, uint256 amount);
@@ -296,16 +235,18 @@ contract PSC is ERC20, ReentrancyGuard {
     constructor()
         ERC20("Paradaise Supply Chain", "PSC")
     {
-        // Immutable wallets (set once)
+        // Immutable wallets
         developerWallet = 0xD47A6b5C4829Ad840890B2df076a4210D96dd1bf;
         founder1 = 0x5496Be16c5098E87F757236E9ba87b487db34b59;
-        founder2 = 0x38ABF89F423D18c35770Ca6e0245DADCe08e8Bae; // ✅ CORRECTED
-        publicOfferingWallet = 0x5496Be16c5098E87F757236E9ba87b487db34b59;
-        publicDistributionWallet = 0x5496Be16c5098E87F757236E9ba87b487db34b59;
+        founder2 = 0x38ABF89F423D18c35770Ca6e0245DADCe08e8Bae;
+        consultantWallet = 0x884593e1570DE2C5Aa89d3e93D2d22e8EE2a7416; // ✅ NEW
+        publicOfferingWallet = 0x2f7a74Ab84B87D3aa3B05EDb4454bf149d606404; // ✅ UPDATED
+        publicDistributionWallet = 0xe80E5D6d3a8C534C29972C9b520ba252e16193Af; // ✅ UPDATED
 
         require(developerWallet != address(0), "Invalid developer wallet");
         require(founder1 != address(0), "Invalid founder1");
         require(founder2 != address(0), "Invalid founder2");
+        require(consultantWallet != address(0), "Invalid consultant wallet");
         require(publicOfferingWallet != address(0), "Invalid public offering wallet");
         require(publicDistributionWallet != address(0), "Invalid public distribution wallet");
 
@@ -342,11 +283,10 @@ contract PSC is ERC20, ReentrancyGuard {
         airdropDistributed = false;
 
         // ════════════════════════════════════════════════════════════════
-        // GAS OPTIMIZATION: Use _mint() directly instead of _transfer()
-        // This saves ~40% gas per distribution.
+        // GAS OPTIMIZATION: Use _mint() directly for all initial distributions
         // ════════════════════════════════════════════════════════════════
 
-        // Mint directly to team members
+        // 1% — Mint directly to team members
         for (uint256 i = 0; i < teamCount; ) {
             uint256 amount = teamAllocations[TEAM_ADDRESSES[i]];
             if (amount > 0) {
@@ -355,28 +295,33 @@ contract PSC is ERC20, ReentrancyGuard {
             unchecked { ++i; }
         }
 
-        // Mint to founders
+        // 4% — Mint to founders (2% each)
         uint256 founderTotalAmount = (TOTAL_SUPPLY * FOUNDERS_PERCENT) / 100;
         uint256 perFounder = founderTotalAmount / 2;
         _mint(founder1, perFounder);
         _mint(founder2, perFounder);
 
-        // Mint to public offering wallet
+        // 1% — Mint to consultants
+        uint256 consultantAmount = (TOTAL_SUPPLY * CONSULTANTS_PERCENT) / 100;
+        _mint(consultantWallet, consultantAmount);
+
+        // 2% — Mint to public offering wallet
         uint256 publicOfferingAmount = (TOTAL_SUPPLY * INITIAL_OFFERING_PERCENT) / 100;
         _mint(publicOfferingWallet, publicOfferingAmount);
 
         // Calculate remaining supply
         uint256 teamTotalAmount = (TOTAL_SUPPLY * TEAM_PERCENT) / 100;
-        uint256 totalDistributed = teamTotalAmount + founderTotalAmount + publicOfferingAmount;
+        uint256 totalDistributed = teamTotalAmount + founderTotalAmount + consultantAmount + publicOfferingAmount;
         remainingSupply = TOTAL_SUPPLY - totalDistributed;
 
-        // Mint remaining tokens to the contract itself (for future releases + airdrop)
+        // Mint remaining tokens to the contract itself
         _mint(address(this), remainingSupply);
 
         emit InitialDistributionDone(
             teamTotalAmount,
             perFounder,
             perFounder,
+            consultantAmount,
             publicOfferingAmount,
             AIRDROP_AMOUNT
         );
@@ -520,14 +465,21 @@ contract PSC is ERC20, ReentrancyGuard {
 
         uint256 annualAmount = (remainingSupply * ANNUAL_RELEASE_PERCENT) / 100;
 
+        // 1% to developer wallet
         uint256 developerAmount = (remainingSupply * ANNUAL_DEVELOPER_PERCENT) / 100;
         _transfer(address(this), developerWallet, developerAmount);
 
+        // 4% to founders (2% each)
         uint256 founderTotalAmount = (remainingSupply * ANNUAL_FOUNDERS_PERCENT) / 100;
         uint256 perFounder = founderTotalAmount / 2;
         _transfer(address(this), founder1, perFounder);
         _transfer(address(this), founder2, perFounder);
 
+        // 1% to consultants
+        uint256 consultantAmount = (remainingSupply * ANNUAL_CONSULTANTS_PERCENT) / 100;
+        _transfer(address(this), consultantWallet, consultantAmount);
+
+        // 4% to public distribution wallet
         uint256 publicAmount = (remainingSupply * ANNUAL_PUBLIC_PERCENT) / 100;
         _transfer(address(this), publicDistributionWallet, publicAmount);
 
@@ -539,6 +491,7 @@ contract PSC is ERC20, ReentrancyGuard {
             developerAmount,
             perFounder,
             perFounder,
+            consultantAmount,
             publicAmount
         );
     }
