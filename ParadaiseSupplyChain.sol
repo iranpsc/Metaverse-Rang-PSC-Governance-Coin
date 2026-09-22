@@ -8,15 +8,24 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 /**
- * @title PSC (Paradaise Supply Chain)
+ * @title PSC (Paradise Supply Chain)
  * @notice Automated distribution architecture with decentralized governance
  * @dev Combines:
- *      - Batch transfer via calldata at deployment time
+ *      - Batch transfer via calldata at initialization time
  *      - Multi-Sig wallet based management
  *      - Merkle Tree for scalable airdrop (supports 1000+ users)
  *      - Removed auto-correction logic for team allocations
- *      - Automatic role transfer to Multi-Sig after initialization
+ *      - Full role transfer to Multi-Sig after initialization
  *      - Rescue function accessible only via Multi-Sig
+ *
+ * FIXES APPLIED:
+ *      - Corrected RELEASE_START_DATE to August 23, 2027 (1818979200)
+ *      - Transferred DEFAULT_ADMIN_ROLE, MULTI_SIG_ROLE, EXECUTOR_ROLE to Multi-Sig
+ *      - Revoked ALL roles from deployer for full decentralization
+ *      - Integrated airdrop via Merkle Tree only (no conflicting hybrid logic)
+ *      - AIRDROP_AMOUNT deducted at setMerkleRoot time (not at initialize)
+ *      - Direct token transfer in claimAirdropMerkle (no secondary claim needed)
+ *      - Fixed token name spelling: "Paradise" instead of "Paradaise"
  */
 contract PSC is ERC20, ReentrancyGuard, AccessControl {
     using SafeERC20 for IERC20;
@@ -37,7 +46,7 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
     uint256 public constant SECONDS_IN_YEAR = 365 days;
 
     uint256 public constant MAX_AIRDROP_RECIPIENTS = 1000;
-    uint256 public constant AIRDROP_AMOUNT = (TOTAL_SUPPLY * 2) / 100;
+    uint256 public constant AIRDROP_AMOUNT = (TOTAL_SUPPLY * 2) / 100; // 4,000,000 PSC
     uint256 public constant AIRDROP_LOCK_DURATION = 60 days;
     uint256 public constant AIRDROP_VESTING_DURATION = 365 days;
 
@@ -51,8 +60,8 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
     uint256 public constant ANNUAL_CONSULTANTS_PERCENT = 1;
     uint256 public constant ANNUAL_PUBLIC_PERCENT = 4;
 
-    // Corrected timestamp: August 23, 2027
-    uint256 public constant RELEASE_START_DATE = 1740000000;
+    // FIXED: August 23, 2027 00:00:00 UTC = 1818979200
+    uint256 public constant RELEASE_START_DATE = 1818979200;
 
     // ============================
     // MUTABLE WALLETS — Upgradable only by MULTI_SIG_ROLE
@@ -77,7 +86,7 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
     mapping(address => bool) public airdropClaimed;
 
     // ============================
-    // AIRDROP VESTING (for non-Merkle recipients)
+    // AIRDROP VESTING
     // ============================
     struct AirdropInfo {
         uint256 totalAllocation;
@@ -129,7 +138,6 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
         uint256 consultantAmount,
         uint256 publicAmount
     );
-    event AirdropDistributed(address[] recipients, uint256 eachAmount, uint256 lockDuration, uint256 vestingDuration);
     event AirdropClaimed(address indexed recipient, uint256 amount);
     event TokensRescued(address indexed token, address indexed to, uint256 amount);
     event WalletsUpdated(
@@ -142,15 +150,15 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
     );
     event Initialized(address indexed by);
     event RolesTransferredToMultiSig(address indexed multiSigAddress);
-    event MerkleRootSet(bytes32 indexed merkleRoot);
+    event MerkleRootSet(bytes32 indexed merkleRoot, uint256 airdropAmount);
 
     // ============================
     // CONSTRUCTOR
     // ============================
     constructor()
-        ERC20("Paradaise Supply Chain", "PSC")
+        ERC20("Paradise Supply Chain", "PSC")
     {
-        // Grant initial roles to deployer
+        // Grant initial roles to deployer (temporary, revoked after initialize)
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN_ROLE, msg.sender);
         _grantRole(EXECUTOR_ROLE, msg.sender);
@@ -185,7 +193,6 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
     function initialize(
         address[] calldata teamAddresses,
         uint256[] calldata teamAmounts,
-        address[] calldata airdropRecipients,
         address multiSigAddress
     ) external onlyAdmin onlyUninitialized {
         // =============================================================
@@ -237,44 +244,19 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
         remainingSupply = TOTAL_SUPPLY - totalDistributed;
 
         // =============================================================
-        // 5. Distribute airdrop (if provided)
+        // 5. Grant ALL roles to Multi-Sig wallet
         // =============================================================
-        if (airdropRecipients.length > 0 && airdropRecipients.length <= MAX_AIRDROP_RECIPIENTS) {
-            uint256 eachAmount = AIRDROP_AMOUNT / airdropRecipients.length;
-            require(eachAmount > 0, "Amount per recipient is too small");
-            require(balanceOf(address(this)) >= AIRDROP_AMOUNT, "Insufficient balance in contract");
-
-            for (uint256 i = 0; i < airdropRecipients.length; ) {
-                address recipient = airdropRecipients[i];
-                require(recipient != address(0), "Invalid recipient address");
-
-                airdropInfo[recipient] = AirdropInfo({
-                    totalAllocation: eachAmount,
-                    claimedAmount: 0,
-                    startTime: block.timestamp
-                });
-                unchecked { ++i; }
-            }
-
-            remainingSupply -= AIRDROP_AMOUNT;
-            airdropDistributed = true;
-
-            emit AirdropDistributed(airdropRecipients, eachAmount, AIRDROP_LOCK_DURATION, AIRDROP_VESTING_DURATION);
-        }
-
-        // =============================================================
-        // 6. Grant MULTI_SIG_ROLE to the multi-sig wallet address
-        // =============================================================
+        _grantRole(DEFAULT_ADMIN_ROLE, multiSigAddress);
+        _grantRole(ADMIN_ROLE, multiSigAddress);
+        _grantRole(EXECUTOR_ROLE, multiSigAddress);
         _grantRole(MULTI_SIG_ROLE, multiSigAddress);
 
         // =============================================================
-        // 7. Revoke ADMIN_ROLE and EXECUTOR_ROLE from the deployer
+        // 6. Revoke ALL roles from deployer for full decentralization
         // =============================================================
+        _revokeRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _revokeRole(ADMIN_ROLE, msg.sender);
         _revokeRole(EXECUTOR_ROLE, msg.sender);
-
-        // Note: DEFAULT_ADMIN_ROLE remains with deployer to manage roles if needed
-        // but can also be revoked for full decentralization
 
         emit InitialDistributionDone(
             teamTotalAmount,
@@ -293,12 +275,21 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
     }
 
     // ============================
-    // MERKLE TREE — Scalable Airdrop
+    // MERKLE TREE — Scalable Airdrop (integrated)
     // ============================
     function setMerkleRoot(bytes32 _merkleRoot) external onlyMultiSig {
         require(!airdropDistributed, "Airdrop already distributed");
+        require(_merkleRoot != bytes32(0), "Invalid root");
+        require(initialized, "Contract not initialized");
+
         merkleRoot = _merkleRoot;
-        emit MerkleRootSet(_merkleRoot);
+        airdropDistributed = true;
+
+        // Deduct airdrop amount from remaining supply at Merkle root setting time
+        require(remainingSupply >= AIRDROP_AMOUNT, "Insufficient remaining supply for airdrop");
+        remainingSupply -= AIRDROP_AMOUNT;
+
+        emit MerkleRootSet(_merkleRoot, AIRDROP_AMOUNT);
     }
 
     function claimAirdropMerkle(
@@ -307,6 +298,7 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
     ) external nonReentrant {
         require(merkleRoot != bytes32(0), "Merkle root not set");
         require(!airdropClaimed[msg.sender], "Already claimed");
+        require(amount > 0, "Amount must be > 0");
 
         // Build the Merkle leaf
         bytes32 leaf = keccak256(abi.encodePacked(msg.sender, amount));
@@ -328,7 +320,7 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
     }
 
     // ============================
-    // AIRDROP CLAIM (for direct distribution from initialize)
+    // AIRDROP CLAIM (vesting release)
     // ============================
     function claimAirdrop() external nonReentrant {
         require(airdropDistributed, "Airdrop not distributed yet");
@@ -450,12 +442,13 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
     }
 
     // ============================
-    // ANNUAL RELEASE — Only by EXECUTOR_ROLE
+    // ANNUAL RELEASE — Only by EXECUTOR_ROLE (Multi-Sig)
     // ============================
     function releaseAnnual() external onlyExecutor nonReentrant {
         require(initialized, "Contract not initialized");
         require(block.timestamp >= lastReleaseTime + SECONDS_IN_YEAR, "Too early: must wait 1 year");
         require(remainingSupply > 0, "No remaining supply to release");
+        require(airdropDistributed, "Airdrop must be set first");
 
         uint256 annualAmount = (remainingSupply * ANNUAL_RELEASE_PERCENT) / 100;
 
