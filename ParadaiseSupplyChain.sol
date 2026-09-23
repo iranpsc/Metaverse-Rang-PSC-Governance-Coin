@@ -17,15 +17,6 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
  *      - Removed auto-correction logic for team allocations
  *      - Full role transfer to Multi-Sig after initialization
  *      - Rescue function accessible only via Multi-Sig
- *
- * FIXES APPLIED:
- *      - Corrected RELEASE_START_DATE to August 23, 2027 (1818979200)
- *      - Transferred DEFAULT_ADMIN_ROLE, MULTI_SIG_ROLE, EXECUTOR_ROLE to Multi-Sig
- *      - Revoked ALL roles from deployer for full decentralization
- *      - Integrated airdrop via Merkle Tree only (no conflicting hybrid logic)
- *      - AIRDROP_AMOUNT deducted at setMerkleRoot time (not at initialize)
- *      - Direct token transfer in claimAirdropMerkle (no secondary claim needed)
- *      - Fixed token name spelling: "Paradise" instead of "Paradaise"
  */
 contract PSC is ERC20, ReentrancyGuard, AccessControl {
     using SafeERC20 for IERC20;
@@ -60,8 +51,8 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
     uint256 public constant ANNUAL_CONSULTANTS_PERCENT = 1;
     uint256 public constant ANNUAL_PUBLIC_PERCENT = 4;
 
-    // FIXED: August 23, 2027 00:00:00 UTC = 1818979200
-    uint256 public constant RELEASE_START_DATE = 1818979200;
+    // RELEASE_START_DATE: November 6, 2027 00:00:00 UTC = 1825545600 (15 Aban 1406)
+    uint256 public constant RELEASE_START_DATE = 1825545600;
 
     // ============================
     // MUTABLE WALLETS — Upgradable only by MULTI_SIG_ROLE
@@ -158,12 +149,10 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
     constructor()
         ERC20("Paradise Supply Chain", "PSC")
     {
-        // Grant initial roles to deployer (temporary, revoked after initialize)
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN_ROLE, msg.sender);
         _grantRole(EXECUTOR_ROLE, msg.sender);
 
-        // Set initial wallet addresses
         developerWallet = 0xD47A6b5C4829Ad840890B2df076a4210D96dd1bf;
         founder1 = 0x5496Be16c5098E87F757236E9ba87b487db34b59;
         founder2 = 0x38ABF89F423D18c35770Ca6e0245DADCe08e8Bae;
@@ -182,7 +171,6 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
         initialized = false;
         merkleRoot = bytes32(0);
 
-        // Mint total supply to the contract itself
         _mint(address(this), TOTAL_SUPPLY);
         remainingSupply = TOTAL_SUPPLY;
     }
@@ -195,18 +183,12 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
         uint256[] calldata teamAmounts,
         address multiSigAddress
     ) external onlyAdmin onlyUninitialized {
-        // =============================================================
-        // 1. Input validation
-        // =============================================================
         require(teamAddresses.length == teamAmounts.length, "Team addresses and amounts length mismatch");
         require(teamAddresses.length > 0, "Team must have at least one member");
         require(multiSigAddress != address(0), "Invalid multi-sig address");
 
-        // =============================================================
-        // 2. Verify total team allocation — NO auto-correction
-        // =============================================================
         uint256 totalTeamAllocation = 0;
-        for (uint256 i = 0; i < teamAmounts.length; ) {
+        for (uint256 i = 0; i < teamAddresses.length; ) {
             require(teamAddresses[i] != address(0), "Invalid team address");
             require(teamAmounts[i] > 0, "Team amount must be > 0");
             totalTeamAllocation += teamAmounts[i];
@@ -214,20 +196,13 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
         }
 
         uint256 targetAllocation = (TOTAL_SUPPLY * TEAM_PERCENT) / 100;
-        // Revert if total team allocation does not exactly match 1% of total supply
         require(totalTeamAllocation == targetAllocation, "Total team allocation must exactly equal 2,000,000");
 
-        // =============================================================
-        // 3. Batch transfer to all team members
-        // =============================================================
         for (uint256 i = 0; i < teamAddresses.length; ) {
             _transfer(address(this), teamAddresses[i], teamAmounts[i]);
             unchecked { ++i; }
         }
 
-        // =============================================================
-        // 4. Distribute to founders, consultants, and public offering
-        // =============================================================
         uint256 founderTotalAmount = (TOTAL_SUPPLY * FOUNDERS_PERCENT) / 100;
         uint256 perFounder = founderTotalAmount / 2;
         _transfer(address(this), founder1, perFounder);
@@ -243,17 +218,11 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
         uint256 totalDistributed = teamTotalAmount + founderTotalAmount + consultantAmount + publicOfferingAmount;
         remainingSupply = TOTAL_SUPPLY - totalDistributed;
 
-        // =============================================================
-        // 5. Grant ALL roles to Multi-Sig wallet
-        // =============================================================
         _grantRole(DEFAULT_ADMIN_ROLE, multiSigAddress);
         _grantRole(ADMIN_ROLE, multiSigAddress);
         _grantRole(EXECUTOR_ROLE, multiSigAddress);
         _grantRole(MULTI_SIG_ROLE, multiSigAddress);
 
-        // =============================================================
-        // 6. Revoke ALL roles from deployer for full decentralization
-        // =============================================================
         _revokeRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _revokeRole(ADMIN_ROLE, msg.sender);
         _revokeRole(EXECUTOR_ROLE, msg.sender);
@@ -285,7 +254,6 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
         merkleRoot = _merkleRoot;
         airdropDistributed = true;
 
-        // Deduct airdrop amount from remaining supply at Merkle root setting time
         require(remainingSupply >= AIRDROP_AMOUNT, "Insufficient remaining supply for airdrop");
         remainingSupply -= AIRDROP_AMOUNT;
 
@@ -300,16 +268,12 @@ contract PSC is ERC20, ReentrancyGuard, AccessControl {
         require(!airdropClaimed[msg.sender], "Already claimed");
         require(amount > 0, "Amount must be > 0");
 
-        // Build the Merkle leaf
         bytes32 leaf = keccak256(abi.encodePacked(msg.sender, amount));
 
-        // Verify the proof
         require(MerkleProof.verify(merkleProof, merkleRoot, leaf), "Invalid merkle proof");
 
-        // Mark as claimed
         airdropClaimed[msg.sender] = true;
 
-        // Store vesting information
         airdropInfo[msg.sender] = AirdropInfo({
             totalAllocation: amount,
             claimedAmount: 0,
