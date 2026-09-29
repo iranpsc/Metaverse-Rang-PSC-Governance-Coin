@@ -725,3 +725,5 @@ contract SupplyChainModule is AccessControl, ReentrancyGuard {
         return (totalFeesCollected, totalBurned, totalToTreasury);
     }
 }
+
+
