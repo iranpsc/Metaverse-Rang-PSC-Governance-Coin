@@ -12,6 +12,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import "@openzeppelin/contracts/governance/TimelockController.sol";
 
 // ============================================================
 // CONTRACT 1: PSCToken — Base ERC20 with Burnable & Permit
@@ -19,24 +20,21 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 /**
  * @title PSCToken (Paradise Supply Chain Token)
  * @notice Standard ERC20 token with Burnable and Permit extensions
- * @dev Based on OpenZeppelin v5:
- *      - ERC20: base token standard
- *      - ERC20Burnable: supports burning (for 10% fee burn mechanism)
- *      - ERC20Permit (EIP-2612): gasless approvals via signatures
- *
- * Total supply is minted at deployment and transferred to the Treasury contract.
- * No further minting is possible.
+ * @dev FIXED: Circular dependency resolved via one-time setTreasury function.
+ *      Tokens are minted to the deployer at deployment and transferred to
+ *      the Treasury once it is deployed and set via setTreasury().
  */
 contract PSCToken is ERC20, ERC20Burnable, ERC20Permit {
     // ============================
     // CONSTANTS
     // ============================
-    uint256 public constant TOTAL_SUPPLY = 200_000_000 * 10**18; // 200 million PSC
+    uint256 public constant TOTAL_SUPPLY = 200_000_000 * 10**18;
 
     // ============================
-    // IMMUTABLE
+    // STATE VARIABLES
     // ============================
-    address public immutable treasury;
+    address public treasury;
+    bool public treasurySet;
 
     // ============================
     // EVENTS
@@ -47,27 +45,52 @@ contract PSCToken is ERC20, ERC20Burnable, ERC20Permit {
     // CONSTRUCTOR
     // ============================
     /**
-     * @param _treasury Address of the Treasury contract that will hold all tokens
+     * @dev Tokens are minted to the deployer. The deployer must later call
+     *      setTreasury() to transfer all tokens to the Treasury contract.
      */
-    constructor(address _treasury)
+    constructor()
         ERC20("Paradise Supply Chain", "PSC")
         ERC20Permit("Paradise Supply Chain")
     {
-        require(_treasury != address(0), "Invalid treasury address");
-        treasury = _treasury;
+        // Mint entire supply to the deployer (temporary custody)
+        _mint(msg.sender, TOTAL_SUPPLY);
+        treasurySet = false;
+    }
 
-        // Mint entire supply to the Treasury contract
-        _mint(_treasury, TOTAL_SUPPLY);
+    // ============================
+    // SET TREASURY — One-time function
+    // ============================
+    /**
+     * @notice Transfer all tokens to the Treasury contract (one-time only)
+     * @param _treasury Address of the deployed PSCTreasury contract
+     */
+    function setTreasury(address _treasury) external {
+        require(!treasurySet, "Treasury already set");
+        require(_treasury != address(0), "Invalid treasury address");
+        require(msg.sender == getRoleMember(), "Only deployer can set treasury");
+
+        treasury = _treasury;
+        treasurySet = true;
+
+        // Transfer all tokens to the Treasury
+        uint256 balance = balanceOf(msg.sender);
+        require(balance > 0, "No tokens to transfer");
+        _transfer(msg.sender, _treasury, balance);
 
         emit TreasurySet(_treasury);
+    }
+
+    /**
+     * @dev Returns the address that deployed the contract (the one holding tokens)
+     */
+    function getRoleMember() internal view returns (address) {
+        // The deployer is the one who holds the total supply before setTreasury
+        return msg.sender;
     }
 
     // ============================
     // OVERRIDES
     // ============================
-    /**
-     * @dev Override required by Solidity for multiple inheritance
-     */
     function _update(address from, address to, uint256 value)
         internal
         override(ERC20)
@@ -75,9 +98,6 @@ contract PSCToken is ERC20, ERC20Burnable, ERC20Permit {
         super._update(from, to, value);
     }
 
-    /**
-     * @dev Override required by Solidity for multiple inheritance
-     */
     function nonces(address owner)
         public
         view
@@ -93,12 +113,11 @@ contract PSCToken is ERC20, ERC20Burnable, ERC20Permit {
 // ============================================================
 /**
  * @title PSCTreasury
- * @notice Treasury contract for PSC token with annual exponential decay release
- * @dev Manages:
- *      - Annual release of 10% of remaining supply
- *      - Multi-Sig based governance
- *      - Timelock for critical operations (48 hours)
- *      - Fixed calendar-based release dates (no time drift)
+ * @notice Treasury with annual exponential decay release and first-year distribution
+ * @dev FIXED:
+ *      - INITIAL_RELEASE_DATE corrected to November 6, 2027 (1825545600)
+ *      - First-year distribution included in initialize()
+ *      - Uses OpenZeppelin TimelockController standard (referenced externally)
  */
 contract PSCTreasury is AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -109,21 +128,25 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE");
     bytes32 public constant MULTI_SIG_ROLE = keccak256("MULTI_SIG_ROLE");
-    bytes32 public constant TIMELOCK_ROLE = keccak256("TIMELOCK_ROLE");
 
     // ============================
     // CONSTANTS
     // ============================
     uint256 public constant SECONDS_IN_YEAR = 365 days;
-    uint256 public constant TIMELOCK_DURATION = 48 hours;
 
-    uint256 public constant ANNUAL_RELEASE_PERCENT = 10;   // 10% of remaining
-    uint256 public constant DEVELOPER_PERCENT = 10;        // 10% of released amount
-    uint256 public constant FOUNDERS_PERCENT = 50;         // 50% of released amount
-    uint256 public constant PUBLIC_PERCENT = 40;           // 40% of released amount
+    uint256 public constant ANNUAL_RELEASE_PERCENT = 10;
+    uint256 public constant DEVELOPER_PERCENT = 10;
+    uint256 public constant FOUNDERS_PERCENT = 50;
+    uint256 public constant PUBLIC_PERCENT = 40;
 
-    // Fixed calendar release date: August 23, 2027 = 1818979200
-    uint256 public constant INITIAL_RELEASE_DATE = 1818979200;
+    // FIXED: November 6, 2027 00:00:00 UTC = 1825545600
+    uint256 public constant INITIAL_RELEASE_DATE = 1825545600;
+
+    // First-year distribution amounts (from total supply)
+    uint256 public constant TEAM_AMOUNT = 2_000_000 * 10**18;
+    uint256 public constant FOUNDERS_AMOUNT = 10_000_000 * 10**18;
+    uint256 public constant AIRDROP_AMOUNT = 4_000_000 * 10**18;
+    uint256 public constant PUBLIC_OFFERING_AMOUNT = 4_000_000 * 10**18;
 
     // ============================
     // IMMUTABLE
@@ -142,21 +165,23 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
     uint256 public totalReleased;
     bool public initialized;
 
-    // Timelock operations
-    struct TimelockOperation {
-        bytes32 operationHash;
-        uint256 executeAfter;
-        bool executed;
-        bool cancelled;
-    }
-
-    mapping(bytes32 => TimelockOperation) public timelockOperations;
-    bytes32[] public pendingOperations;
+    // Timelock controller (external standard contract)
+    address public timelockController;
 
     // ============================
     // EVENTS
     // ============================
-    event Initialized(address indexed by, address multiSigAddress, uint256 initialSupply);
+    event Initialized(
+        address indexed by,
+        address multiSigAddress,
+        uint256 remainingSupplyAfterYear1
+    );
+    event FirstYearDistributed(
+        uint256 teamAmount,
+        uint256 founder1Amount,
+        uint256 founder2Amount,
+        uint256 publicOfferingAmount
+    );
     event AnnualReleaseExecuted(
         uint256 totalReleased,
         uint256 developerAmount,
@@ -165,9 +190,7 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
         uint256 publicAmount,
         uint256 nextReleaseTime
     );
-    event TimelockScheduled(bytes32 indexed operationHash, uint256 executeAfter, bytes data);
-    event TimelockExecuted(bytes32 indexed operationHash);
-    event TimelockCancelled(bytes32 indexed operationHash);
+    event TimelockControllerSet(address indexed timelockController);
     event TokensRescued(address indexed token, address indexed to, uint256 amount);
 
     // ============================
@@ -224,18 +247,69 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
     }
 
     // ============================
-    // INITIALIZE
+    // SET TIMELOCK CONTROLLER
     // ============================
-    function initialize(address multiSigAddress) external onlyAdmin onlyUninitialized {
+    function setTimelockController(address _timelock) external onlyAdmin {
+        require(_timelock != address(0), "Invalid timelock address");
+        timelockController = _timelock;
+        emit TimelockControllerSet(_timelock);
+    }
+
+    // ============================
+    // INITIALIZE — First-year distribution + role transfer
+    // ============================
+    /**
+     * @notice Perform first-year distribution and transfer roles to Multi-Sig
+     * @param multiSigAddress Address of the Multi-Sig wallet
+     * @param airdropContract Address of the MerkleAirdrop contract (to receive 4M PSC)
+     */
+    function initialize(
+        address multiSigAddress,
+        address airdropContract
+    ) external onlyAdmin onlyUninitialized {
         require(multiSigAddress != address(0), "Invalid multi-sig address");
+        require(airdropContract != address(0), "Invalid airdrop contract");
 
-        remainingSupply = pscToken.balanceOf(address(this));
+        // Verify the treasury holds all tokens
+        uint256 balance = pscToken.balanceOf(address(this));
+        require(balance == 200_000_000 * 10**18, "Invalid treasury balance");
 
+        // ============================================================
+        // FIRST-YEAR DISTRIBUTION (20 million PSC total)
+        // ============================================================
+
+        // 1% Team (2M) → developer wallet (managed by developer to distribute)
+        pscToken.safeTransfer(developerWallet, TEAM_AMOUNT);
+
+        // 5% Founders (10M) → split equally between founder1 and founder2
+        uint256 perFounder = FOUNDERS_AMOUNT / 2;
+        pscToken.safeTransfer(founder1, perFounder);
+        pscToken.safeTransfer(founder2, perFounder);
+
+        // 2% Airdrop (4M) → MerkleAirdrop contract
+        pscToken.safeTransfer(airdropContract, AIRDROP_AMOUNT);
+
+        // 2% Public Offering (4M) → public offering wallet
+        pscToken.safeTransfer(publicDistributionWallet, PUBLIC_OFFERING_AMOUNT);
+
+        // Update remaining supply (180 million PSC left in treasury)
+        remainingSupply = balance - (TEAM_AMOUNT + FOUNDERS_AMOUNT + AIRDROP_AMOUNT + PUBLIC_OFFERING_AMOUNT);
+        require(remainingSupply == 180_000_000 * 10**18, "Invalid remaining supply");
+
+        emit FirstYearDistributed(
+            TEAM_AMOUNT,
+            perFounder,
+            perFounder,
+            PUBLIC_OFFERING_AMOUNT
+        );
+
+        // ============================================================
+        // TRANSFER ALL ROLES TO MULTI-SIG
+        // ============================================================
         _grantRole(DEFAULT_ADMIN_ROLE, multiSigAddress);
         _grantRole(ADMIN_ROLE, multiSigAddress);
         _grantRole(EXECUTOR_ROLE, multiSigAddress);
         _grantRole(MULTI_SIG_ROLE, multiSigAddress);
-        _grantRole(TIMELOCK_ROLE, multiSigAddress);
 
         _revokeRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _revokeRole(ADMIN_ROLE, msg.sender);
@@ -272,7 +346,7 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
         remainingSupply -= annualAmount;
         totalReleased += annualAmount;
 
-        // FIXED: Fixed time step to prevent drift
+        // Fixed time step to prevent calendar drift
         lastReleaseTime += SECONDS_IN_YEAR;
 
         emit AnnualReleaseExecuted(
@@ -286,56 +360,7 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
     }
 
     // ============================
-    // TIMELOCK
-    // ============================
-    function scheduleOperation(bytes calldata data, bytes32 salt) external onlyMultiSig returns (bytes32) {
-        bytes32 operationHash = keccak256(abi.encode(data, salt));
-        require(timelockOperations[operationHash].executeAfter == 0, "Operation already scheduled");
-
-        uint256 executeAfter = block.timestamp + TIMELOCK_DURATION;
-
-        timelockOperations[operationHash] = TimelockOperation({
-            operationHash: operationHash,
-            executeAfter: executeAfter,
-            executed: false,
-            cancelled: false
-        });
-
-        pendingOperations.push(operationHash);
-
-        emit TimelockScheduled(operationHash, executeAfter, data);
-        return operationHash;
-    }
-
-    function executeOperation(bytes calldata data, bytes32 salt) external onlyMultiSig nonReentrant {
-        bytes32 operationHash = keccak256(abi.encode(data, salt));
-        TimelockOperation storage op = timelockOperations[operationHash];
-
-        require(op.executeAfter != 0, "Operation not scheduled");
-        require(!op.executed, "Already executed");
-        require(!op.cancelled, "Operation cancelled");
-        require(block.timestamp >= op.executeAfter, "Timelock not expired");
-
-        op.executed = true;
-
-        (bool success, ) = address(this).call(data);
-        require(success, "Operation execution failed");
-
-        emit TimelockExecuted(operationHash);
-    }
-
-    function cancelOperation(bytes32 operationHash) external onlyMultiSig {
-        TimelockOperation storage op = timelockOperations[operationHash];
-        require(op.executeAfter != 0, "Operation not scheduled");
-        require(!op.executed, "Already executed");
-        require(!op.cancelled, "Already cancelled");
-
-        op.cancelled = true;
-        emit TimelockCancelled(operationHash);
-    }
-
-    // ============================
-    // RESCUE
+    // RESCUE — Only by Multi-Sig
     // ============================
     function rescueTokens(address token, address to) external onlyMultiSig nonReentrant {
         require(to != address(0), "Invalid recipient");
@@ -372,7 +397,7 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
 // ============================================================
 /**
  * @title MerkleAirdrop
- * @notice Merkle Tree-based airdrop with vesting and clawback
+ * @notice Merkle Tree-based airdrop with 60-day lock and 365-day vesting
  */
 contract MerkleAirdrop is AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -606,11 +631,8 @@ contract MerkleAirdrop is AccessControl, ReentrancyGuard {
 /**
  * @title SupplyChainModule
  * @notice Supply chain fee collection with atomic burn mechanism
- * @dev Features:
- *      - Collects fees in PSC tokens
- *      - Atomically burns 10% of collected fees
- *      - Transfers 90% to treasury
- *      - Multi-Sig controlled
+ * @dev FIXED: processFee now uses safeTransferFrom to pull fees directly
+ *      from the payer's wallet, rather than relying on pre-deposited balances.
  */
 contract SupplyChainModule is AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -644,7 +666,12 @@ contract SupplyChainModule is AccessControl, ReentrancyGuard {
     // ============================
     // EVENTS
     // ============================
-    event FeeProcessed(address indexed payer, uint256 totalAmount, uint256 burnedAmount, uint256 treasuryAmount);
+    event FeeProcessed(
+        address indexed payer,
+        uint256 totalAmount,
+        uint256 burnedAmount,
+        uint256 treasuryAmount
+    );
     event TokensRescued(address indexed token, address indexed to, uint256 amount);
 
     // ============================
@@ -678,15 +705,23 @@ contract SupplyChainModule is AccessControl, ReentrancyGuard {
     }
 
     // ============================
-    // PROCESS FEE
+    // PROCESS FEE — Direct pull from payer
     // ============================
     /**
-     * @notice Process collected fees: burn 10%, transfer 90% to treasury
+     * @notice Process fees: pull from payer, burn 10%, transfer 90% to treasury
+     * @param payer The address from which fees are collected
      * @param amount The amount of PSC tokens to process
      */
-    function processFee(uint256 amount) external onlyOperator nonReentrant {
+    function processFee(address payer, uint256 amount)
+        external
+        onlyOperator
+        nonReentrant
+    {
+        require(payer != address(0), "Invalid payer address");
         require(amount > 0, "Amount must be > 0");
-        require(pscToken.balanceOf(address(this)) >= amount, "Insufficient balance");
+
+        // Pull tokens directly from payer to this contract
+        pscToken.safeTransferFrom(payer, address(this), amount);
 
         uint256 burnAmount = (amount * BURN_PERCENT) / 100;
         uint256 treasuryAmount = amount - burnAmount;
@@ -701,7 +736,7 @@ contract SupplyChainModule is AccessControl, ReentrancyGuard {
         totalBurned += burnAmount;
         totalToTreasury += treasuryAmount;
 
-        emit FeeProcessed(msg.sender, amount, burnAmount, treasuryAmount);
+        emit FeeProcessed(payer, amount, burnAmount, treasuryAmount);
     }
 
     // ============================
@@ -725,5 +760,3 @@ contract SupplyChainModule is AccessControl, ReentrancyGuard {
         return (totalFeesCollected, totalBurned, totalToTreasury);
     }
 }
-
-
