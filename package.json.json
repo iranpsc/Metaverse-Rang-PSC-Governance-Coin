@@ -1,0 +1,6 @@
+{
+    "scripts": {
+        "deploy:pool:sepolia": "NETWORK=sepolia npx hardhat run scripts/deploy-uniswap-pool.js --network sepolia",
+        "deploy:pool:mainnet": "NETWORK=mainnet npx hardhat run scripts/deploy-uniswap-pool.js --network mainnet"
+    }
+}

@@ -1,0 +1,3 @@
+scripts/
+├── deploy-uniswap-pool.js      # اسکریپت اصلی ایجاد استخر و افزودن نقدینگی
+└── uniswap-config.js           # فایل تنظیمات
