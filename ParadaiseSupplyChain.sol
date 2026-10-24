@@ -70,8 +70,8 @@ contract PSCToken is ERC20, ERC20Burnable, ERC20Permit {
 // ============================================================
 /**
  * @title PSCTreasury
- * @notice Treasury contract managing first-year allocations, multi-wallet team distribution,
- *         and an annual exponential decay release mechanism governed by AccessControl/Timelock.
+ * @notice Treasury contract managing Year 1 distributions (including scientific consultant),
+ *         and annual dynamic decay release fully synchronized with live balance.
  */
 contract PSCTreasury is AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -91,10 +91,13 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
 
     // --- Constants ---
     uint256 public constant SECONDS_IN_YEAR = 365 days;
-    uint256 public constant ANNUAL_RELEASE_BPS = 1000; // 10.00%
-    uint256 public constant DEVELOPER_BPS = 1000;      // 10.00% of annual release
-    uint256 public constant FOUNDERS_BPS = 5000;       // 50.00% of annual release
-    uint256 public constant PUBLIC_BPS = 4000;         // 40.00% of annual release
+    uint256 public constant ANNUAL_RELEASE_BPS = 1000;    // 10.00% of current treasury balance
+
+    // Stakeholder Splits (Total = 10,000 BPS = 100%)
+    uint256 public constant DEVELOPER_BPS = 1000;         // 10.00%
+    uint256 public constant FOUNDERS_BPS = 4000;          // 40.00% (20% Founder1, 20% Founder2)
+    uint256 public constant CONSULTANT_BPS = 1000;        // 10.00%
+    uint256 public constant PUBLIC_BPS = 4000;            // 40.00%
 
     // November 6, 2027 00:00:00 UTC = 1825545600
     uint256 public constant INITIAL_RELEASE_DATE = 1825545600;
@@ -102,7 +105,8 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
     // First-Year Distribution (20,000,000 PSC)
     uint256 public constant TOTAL_SUPPLY_CAP = 200_000_000 * 10**18;
     uint256 public constant TEAM_AMOUNT = 2_000_000 * 10**18;
-    uint256 public constant FOUNDERS_AMOUNT = 10_000_000 * 10**18;
+    uint256 public constant FOUNDERS_AMOUNT = 8_000_000 * 10**18;      // 4M each
+    uint256 public constant CONSULTANT_AMOUNT = 2_000_000 * 10**18;    // 2M
     uint256 public constant AIRDROP_AMOUNT = 4_000_000 * 10**18;
     uint256 public constant PUBLIC_OFFERING_AMOUNT = 4_000_000 * 10**18;
 
@@ -111,11 +115,11 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
     address public immutable developerWallet;
     address public immutable founder1;
     address public immutable founder2;
+    address public immutable consultantWallet;
     address public immutable publicOfferingWallet;
     address public immutable publicDistributionWallet;
 
     // --- State Variables ---
-    uint256 public remainingSupply;
     uint256 public lastReleaseTime;
     uint256 public totalReleased;
     bool public initialized;
@@ -126,6 +130,7 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
         uint256 teamTotal,
         uint256 founder1Amount,
         uint256 founder2Amount,
+        uint256 consultantAmount,
         uint256 airdropAmount,
         uint256 publicOfferingAmount
     );
@@ -134,8 +139,10 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
         uint256 developerAmount,
         uint256 founder1Amount,
         uint256 founder2Amount,
+        uint256 consultantAmount,
         uint256 publicAmount,
-        uint256 nextReleaseTimestamp
+        uint256 nextReleaseTimestamp,
+        uint256 newBalance
     );
     event TokensRescued(address indexed token, address indexed to, uint256 amount);
 
@@ -144,6 +151,7 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
         address _developerWallet,
         address _founder1,
         address _founder2,
+        address _consultantWallet,
         address _publicOfferingWallet,
         address _publicDistributionWallet
     ) {
@@ -152,6 +160,7 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
             _developerWallet == address(0) ||
             _founder1 == address(0) ||
             _founder2 == address(0) ||
+            _consultantWallet == address(0) ||
             _publicOfferingWallet == address(0) ||
             _publicDistributionWallet == address(0)
         ) revert InvalidParameters();
@@ -160,6 +169,7 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
         developerWallet = _developerWallet;
         founder1 = _founder1;
         founder2 = _founder2;
+        consultantWallet = _consultantWallet;
         publicOfferingWallet = _publicOfferingWallet;
         publicDistributionWallet = _publicDistributionWallet;
 
@@ -169,10 +179,6 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
 
     /**
      * @notice Distributes Year 1 tokens according to tokenomics and transfers control to TimelockController.
-     * @param timelockAddress The TimelockController address handling admin governance.
-     * @param airdropContract The MerkleAirdrop contract address.
-     * @param teamWallets Individual verified wallets of core team members.
-     * @param teamAmounts Respective token allocations for each team wallet (Sum must strictly equal 2M PSC).
      */
     function initialize(
         address timelockAddress,
@@ -187,7 +193,7 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
         uint256 currentBalance = pscToken.balanceOf(address(this));
         if (currentBalance != TOTAL_SUPPLY_CAP) revert InvalidParameters();
 
-        // 1. Distribute Year-1 Team Allocation to individual verified addresses
+        // 1. Distribute Year-1 Team Allocation to individual verified addresses (2M)
         uint256 distributedTeamTotal = 0;
         for (uint256 i = 0; i < teamWallets.length; ) {
             if (teamWallets[i] == address(0) || teamAmounts[i] == 0) revert InvalidParameters();
@@ -197,25 +203,27 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
         }
         if (distributedTeamTotal != TEAM_AMOUNT) revert InvalidDistributionSum();
 
-        // 2. Distribute to Founders (5M each)
+        // 2. Distribute to Founders (4M each = 8M total)
         uint256 perFounder = FOUNDERS_AMOUNT / 2;
         pscToken.safeTransfer(founder1, perFounder);
         pscToken.safeTransfer(founder2, perFounder);
 
-        // 3. Fund Merkle Airdrop Contract (4M)
+        // 3. Distribute to Scientific Consultant Wallet (2M)
+        pscToken.safeTransfer(consultantWallet, CONSULTANT_AMOUNT);
+
+        // 4. Fund Merkle Airdrop Contract (4M)
         pscToken.safeTransfer(airdropContract, AIRDROP_AMOUNT);
 
-        // 4. Send Public Offering allocation to the dedicated ICO/sale wallet (4M)
+        // 5. Send Public Offering allocation to dedicated ICO/sale wallet (4M)
         pscToken.safeTransfer(publicOfferingWallet, PUBLIC_OFFERING_AMOUNT);
 
-        // 5. Update Treasury remaining balance (180M)
-        remainingSupply = TOTAL_SUPPLY_CAP - (TEAM_AMOUNT + FOUNDERS_AMOUNT + AIRDROP_AMOUNT + PUBLIC_OFFERING_AMOUNT);
         initialized = true;
 
         emit FirstYearDistributed(
             TEAM_AMOUNT,
             perFounder,
             perFounder,
+            CONSULTANT_AMOUNT,
             AIRDROP_AMOUNT,
             PUBLIC_OFFERING_AMOUNT
         );
@@ -227,21 +235,25 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
 
         _revokeRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
-        emit Initialized(timelockAddress, remainingSupply);
+        emit Initialized(timelockAddress, pscToken.balanceOf(address(this)));
     }
 
     /**
-     * @notice Releases 10% annual decay supply to stakeholders after November 6, 2027.
+     * @notice Releases 10% annual decay supply based on live balance (includes fee deposits and clawbacks).
      */
     function releaseAnnual() external onlyRole(EXECUTOR_ROLE) nonReentrant {
         if (!initialized) revert NotInitialized();
         if (block.timestamp < lastReleaseTime + SECONDS_IN_YEAR) revert TooEarlyForRelease();
-        if (remainingSupply == 0) revert NoRemainingSupply();
 
-        uint256 annualAmount = (remainingSupply * ANNUAL_RELEASE_BPS) / 10000;
+        // Dynamically synchronized with actual on-chain balance
+        uint256 currentBalance = pscToken.balanceOf(address(this));
+        if (currentBalance == 0) revert NoRemainingSupply();
+
+        uint256 annualAmount = (currentBalance * ANNUAL_RELEASE_BPS) / 10000;
 
         uint256 developerAmount = (annualAmount * DEVELOPER_BPS) / 10000;
         uint256 foundersAmount = (annualAmount * FOUNDERS_BPS) / 10000;
+        uint256 consultantAmount = (annualAmount * CONSULTANT_BPS) / 10000;
         uint256 publicAmount = (annualAmount * PUBLIC_BPS) / 10000;
 
         uint256 founder1Amount = foundersAmount / 2;
@@ -250,9 +262,9 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
         pscToken.safeTransfer(developerWallet, developerAmount);
         pscToken.safeTransfer(founder1, founder1Amount);
         pscToken.safeTransfer(founder2, founder2Amount);
+        pscToken.safeTransfer(consultantWallet, consultantAmount);
         pscToken.safeTransfer(publicDistributionWallet, publicAmount);
 
-        remainingSupply -= annualAmount;
         totalReleased += annualAmount;
         lastReleaseTime += SECONDS_IN_YEAR;
 
@@ -261,8 +273,10 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
             developerAmount,
             founder1Amount,
             founder2Amount,
+            consultantAmount,
             publicAmount,
-            lastReleaseTime
+            lastReleaseTime,
+            pscToken.balanceOf(address(this))
         );
     }
 
@@ -280,6 +294,10 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
         emit TokensRescued(token, to, balance);
     }
 
+    function getRemainingSupply() external view returns (uint256) {
+        return pscToken.balanceOf(address(this));
+    }
+
     function getTimeUntilNextRelease() external view returns (uint256) {
         uint256 nextTime = lastReleaseTime + SECONDS_IN_YEAR;
         if (block.timestamp >= nextTime) return 0;
@@ -293,7 +311,7 @@ contract PSCTreasury is AccessControl, ReentrancyGuard {
 /**
  * @title MerkleAirdrop
  * @notice Merkle-tree airdrop with a 90-day claim window, 60-day cliff/lock,
- *         and 365-day linear vesting. Clawback strictly protects vested user allocations.
+ *         and 365-day linear vesting. Clawback strictly protects active user allocations.
  */
 contract MerkleAirdrop is AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -308,6 +326,7 @@ contract MerkleAirdrop is AccessControl, ReentrancyGuard {
     error NothingToRelease();
     error InsufficientContractBalance();
     error InvalidAddress();
+    error CannotRescuePSCTokens();
 
     bytes32 public constant TIMELOCK_ROLE = keccak256("TIMELOCK_ROLE");
 
@@ -340,6 +359,7 @@ contract MerkleAirdrop is AccessControl, ReentrancyGuard {
     event AirdropClaimed(address indexed recipient, uint256 amount, uint256 vestingStartTime);
     event TokensReleased(address indexed recipient, uint256 amount);
     event ClawbackExecuted(uint256 amountClawedBack, address indexed treasury);
+    event TokensRescued(address indexed token, address indexed to, uint256 amount);
 
     constructor(address _pscToken, address _treasury, address _timelock) {
         if (_pscToken == address(0) || _treasury == address(0) || _timelock == address(0)) {
@@ -369,6 +389,9 @@ contract MerkleAirdrop is AccessControl, ReentrancyGuard {
         if (block.timestamp > airdropStartTime + CLAIM_WINDOW) revert ClaimWindowClosed();
         if (hasClaimed[msg.sender]) revert AlreadyClaimed();
         if (amount == 0) revert ZeroAllocation();
+
+        // Enforce airdrop cap bounds
+        if (totalAllocatedClaimed + amount > totalAirdropAmount) revert InsufficientContractBalance();
 
         bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(msg.sender, amount))));
         if (!MerkleProof.verify(merkleProof, merkleRoot, leaf)) revert InvalidMerkleProof();
@@ -420,6 +443,17 @@ contract MerkleAirdrop is AccessControl, ReentrancyGuard {
         emit ClawbackExecuted(clawbackAmount, treasury);
     }
 
+    function rescueTokens(address token, address to) external onlyRole(TIMELOCK_ROLE) nonReentrant {
+        if (to == address(0)) revert InvalidAddress();
+        if (token == address(pscToken)) revert CannotRescuePSCTokens();
+
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (balance == 0) revert NothingToRelease();
+
+        IERC20(token).safeTransfer(to, balance);
+        emit TokensRescued(token, to, balance);
+    }
+
     function _getClaimableAmount(address user) internal view returns (uint256) {
         ClaimInfo memory info = claims[user];
         if (info.totalAllocation == 0) return 0;
@@ -450,13 +484,16 @@ contract MerkleAirdrop is AccessControl, ReentrancyGuard {
 // ============================================================
 /**
  * @title SupplyChainModule
- * @notice Fee collection module supporting both direct caller payments and operator-mediated EIP-2612 Permit pulls.
+ * @notice Fee collection module with front-running protected Permit execution.
  */
 contract SupplyChainModule is AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     error InvalidAddress();
     error ZeroAmount();
+    error CannotRescuePSCTokens();
+    error NothingToRescue();
+    error InsufficientAllowance();
 
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant TIMELOCK_ROLE = keccak256("TIMELOCK_ROLE");
@@ -472,6 +509,7 @@ contract SupplyChainModule is AccessControl, ReentrancyGuard {
     uint256 public totalToTreasury;
 
     event FeeProcessed(address indexed payer, uint256 amount, uint256 burned, uint256 toTreasury);
+    event TokensRescued(address indexed token, address indexed to, uint256 amount);
 
     constructor(address _pscToken, address _treasury, address _timelock) {
         if (_pscToken == address(0) || _treasury == address(0) || _timelock == address(0)) {
@@ -492,6 +530,9 @@ contract SupplyChainModule is AccessControl, ReentrancyGuard {
         _executeFeeDistribution(payer, amount);
     }
 
+    /**
+     * @notice Pulls fee atomically with front-running mitigation for permit signatures.
+     */
     function processFeeWithPermit(
         address payer,
         uint256 amount,
@@ -503,8 +544,27 @@ contract SupplyChainModule is AccessControl, ReentrancyGuard {
         if (payer == address(0)) revert InvalidAddress();
         if (amount == 0) revert ZeroAmount();
 
-        IERC20Permit(address(pscToken)).permit(payer, address(this), amount, deadline, v, r, s);
+        // Front-running safe execution
+        try IERC20Permit(address(pscToken)).permit(payer, address(this), amount, deadline, v, r, s) {} 
+        catch {
+            // If permit fails (already mined/front-run), ensure allowance is sufficient
+            if (pscToken.allowance(payer, address(this)) < amount) {
+                revert InsufficientAllowance();
+            }
+        }
+
         _executeFeeDistribution(payer, amount);
+    }
+
+    function rescueTokens(address token, address to) external onlyRole(TIMELOCK_ROLE) nonReentrant {
+        if (to == address(0)) revert InvalidAddress();
+        if (token == address(pscToken)) revert CannotRescuePSCTokens();
+
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (balance == 0) revert NothingToRescue();
+
+        IERC20(token).safeTransfer(to, balance);
+        emit TokensRescued(token, to, balance);
     }
 
     function _executeFeeDistribution(address payer, uint256 amount) internal {
